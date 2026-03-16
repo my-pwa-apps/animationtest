@@ -158,16 +158,16 @@
                 <div class="auth-tab" data-auth="apikey">API Key</div>
             </div>
 
-            <!-- Free (Pollinations.ai) section -->
+            <!-- Free (Cloudflare AI) section -->
             <div class="auth-section active" id="auth-free">
                 <div class="hint" style="margin-bottom:12px; color:#6ee7b7; font-size:13px;">
-                    &#10024; Uses <strong>Pollinations.ai</strong> — free, no key needed.
+                    &#10024; <strong>100% free</strong> — uses Cloudflare Workers AI (Stable Diffusion XL). No API key needed.
                 </div>
                 <div class="field">
-                    <label>CORS Proxy (optional but recommended)</label>
-                    <input type="text" id="cfg-proxy" placeholder="https://your-worker.your-subdomain.workers.dev"
+                    <label>Worker URL</label>
+                    <input type="text" id="cfg-proxy" 
                         value="https://ai-image-proxy.garfieldapp.workers.dev">
-                    <div class="hint">Deploy the included worker.js to Cloudflare Workers for reliable generation</div>
+                    <div class="hint">Your Cloudflare AI worker endpoint</div>
                 </div>
             </div>
 
@@ -372,10 +372,46 @@ class AIProvider {
     }
 
     async generateImage(prompt, size = '1024x1024') {
+        if (this.mode === 'cloudflare')   return this._cloudflareGenerate(prompt, size);
         if (this.mode === 'pollinations') return this._pollinationsGenerate(prompt, size);
         if (this.mode === 'together')     return this._togetherGenerate(prompt, size);
         if (this.mode === 'azure')        return this._azureGenerate(prompt, size);
         return this._openaiGenerate(prompt, size);
+    }
+
+    /* ── Cloudflare Workers AI (free) ── */
+    async _cloudflareGenerate(prompt, size) {
+        const [w, h] = size.split('x').map(Number);
+        // SDXL supports specific sizes; clamp to 1024 max
+        const pw = Math.min(w, 1024);
+        const ph = Math.min(h, 1024);
+
+        const maxRetries = 3;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            if (attempt > 0) {
+                const wait = attempt * 5000;
+                console.log(`Cloudflare AI retry ${attempt}, waiting ${wait / 1000}s...`);
+                await this._delay(wait);
+            }
+            try {
+                const resp = await fetch(`${this.corsProxy}/generate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, width: pw, height: ph }),
+                });
+                if (resp.ok) {
+                    const blob = await resp.blob();
+                    if (blob.size > 1000) return blob;
+                }
+                const errText = await resp.text().catch(() => '');
+                console.warn(`Cloudflare AI attempt ${attempt + 1}: ${resp.status} ${errText}`);
+            } catch (err) {
+                console.warn(`Cloudflare AI attempt ${attempt + 1} error:`, err.message);
+            }
+            if (attempt >= maxRetries - 1) {
+                throw new Error('Cloudflare AI generation failed. Check the worker URL and try again.');
+            }
+        }
     }
 
     /* ── Pollinations.ai (free, no key) ── */
@@ -1213,9 +1249,10 @@ class Game {
             let providerOpts;
 
             if (authMode === 'free') {
-                const proxy = document.getElementById('cfg-proxy').value.trim();
-                if (proxy) localStorage.setItem('ai_village_proxy', proxy);
-                providerOpts = { mode: 'pollinations', corsProxy: proxy || '' };
+                const workerUrl = document.getElementById('cfg-proxy').value.trim();
+                if (!workerUrl) { alert('Please enter the Worker URL.'); return; }
+                localStorage.setItem('ai_village_proxy', workerUrl);
+                providerOpts = { mode: 'cloudflare', corsProxy: workerUrl };
             } else if (authMode === 'together') {
                 const key = document.getElementById('cfg-together-key').value.trim();
                 if (!key) { alert('Please enter your Together.ai API key.'); return; }

@@ -1,0 +1,6 @@
+name = "ai-image-proxy"
+main = "worker.js"
+compatibility_date = "2026-03-16"
+
+[ai]
+binding = "AI"
