@@ -357,63 +357,35 @@ class AIProvider {
 
     /* ── Pollinations.ai (free, no key) ── */
     async _pollinationsGenerate(prompt, size) {
+        // Cap at 512 to reduce server load and improve success rate
         const [w, h] = size.split('x').map(Number);
-        // Use smaller sizes to reduce load on the free API
-        const pw = Math.min(w, 768);
-        const ph = Math.min(h, 768);
+        const pw = Math.min(w, 512);
+        const ph = Math.min(h, 512);
 
         const maxRetries = 6;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             if (attempt > 0) {
-                const wait = 10000 + attempt * 10000; // 20s, 30s, 40s, 50s, 60s
+                const wait = 15000 + attempt * 15000; // 30s, 45s, 60s, 75s, 90s
                 console.log(`Pollinations retry ${attempt}/${maxRetries - 1}, waiting ${wait / 1000}s...`);
                 await this._delay(wait);
             }
 
+            const seed = Math.floor(Math.random() * 1000000);
+            const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${pw}&height=${ph}&seed=${seed}&nologo=true`;
+
             try {
-                // Use the OpenAI-compatible POST API (more reliable than URL-based)
-                const resp = await fetch('https://api.pollinations.ai/v1/images/generations', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        prompt,
-                        model: 'flux',
-                        width: pw,
-                        height: ph,
-                        seed: Math.floor(Math.random() * 1000000),
-                        nologo: true,
-                        n: 1,
-                    }),
-                });
-
+                const resp = await fetch(url);
                 if (resp.ok) {
-                    const json = await resp.json();
-                    const item = json.data?.[0];
-                    if (item?.b64_json) return this._b64ToBlob(item.b64_json);
-                    if (item?.url) {
-                        // Fetch the image from the returned URL
-                        const imgResp = await fetch(item.url);
-                        if (imgResp.ok) {
-                            const blob = await imgResp.blob();
-                            if (blob.size > 1000) return blob;
-                        }
-                    }
-                }
-
-                // Fallback: try the simple URL-based API
-                const seed = Math.floor(Math.random() * 1000000);
-                const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${pw}&height=${ph}&seed=${seed}&nologo=true`;
-                const fallback = await fetch(url);
-                if (fallback.ok) {
-                    const blob = await fallback.blob();
+                    const blob = await resp.blob();
                     if (blob.size > 1000) return blob;
                 }
-
-                console.warn(`Pollinations attempt ${attempt + 1} failed`);
-                if (attempt >= maxRetries - 1) throw new Error(`Pollinations unavailable after ${maxRetries} attempts. The free API may be overloaded — try again later.`);
+                console.warn(`Pollinations attempt ${attempt + 1}: status ${resp.status}`);
             } catch (err) {
-                if (err.message.includes('Pollinations unavailable') || attempt >= maxRetries - 1) throw err;
-                console.warn(`Pollinations attempt ${attempt + 1} error:`, err.message);
+                console.warn(`Pollinations attempt ${attempt + 1} network error:`, err.message);
+            }
+
+            if (attempt >= maxRetries - 1) {
+                throw new Error(`Pollinations unavailable after ${maxRetries} attempts. The free API may be overloaded — please wait a few minutes and try again.`);
             }
         }
     }
@@ -513,7 +485,7 @@ class AssetGenerator {
         for (let i = 0; i < config.npcs.length; i++) {
             if (this.cancelled) return;
             // Delay between requests for rate-limited APIs
-            if (this.ai.mode === 'pollinations') await this.ai._delay(3000);
+            if (this.ai.mode === 'pollinations') await this.ai._delay(10000);
             this._emit({
                 message: `Generating NPC ${i + 1}/${config.npcs.length}: ${config.npcs[i]}...`
             });
