@@ -661,7 +661,7 @@ class AssetGenerator {
     }
 
     _npcPrompt(desc) {
-        return `single 2D game character, ${desc}, full body portrait, facing forward, arms at sides, no extra objects, no weapons on ground, solid flat color background, cartoon RPG art`;
+        return `pixel art RPG character sprite sheet, ${desc}, chibi style, 3 columns 4 rows grid on transparent background. Row 1: front-facing walk cycle 3 frames. Row 2: right-facing walk cycle 3 frames. Row 3: left-facing walk cycle 3 frames. Row 4: back-facing walk cycle 3 frames. Each cell same size, consistent character proportions, retro 16-bit JRPG style`;
     }
 
     _emit(data) { this.onStatus(data); }
@@ -1546,16 +1546,15 @@ class Game {
         const pImg = playerSpriteImg || npcImages[0];
         if (!pImg) { alert('No sprite images available.'); return; }
 
-        // Detect if it's a proper sprite sheet (legacy local files) or AI-generated single image
+        // All sprites are 3×4 grid sheets (legacy or AI-generated)
         const isLegacySheet = (pImg.width === 680 && pImg.height === 844);
         const playerSprite = isLegacySheet
             ? new AnimatedSprite(pImg, 3, 4, 136, 211)
-            : (playerSpriteImg ? new AnimatedSprite(pImg) : new SingleImageSprite(pImg));
+            : new AnimatedSprite(pImg, 3, 4);
 
-        // Determine the character's pixel height for scaling
-        // AI images are ~1024px, we want them to appear ~80-120px on a 1024px background
-        const charPixelH = isLegacySheet ? 211 : (playerSpriteImg ? pImg.height / 4 : pImg.height);
-        const targetH = bgImg.height * 0.12; // character should be ~12% of scene height
+        // Scale characters to ~12% of scene height
+        const charPixelH = isLegacySheet ? 211 : Math.floor(pImg.height / 4);
+        const targetH = bgImg.height * 0.12;
         const baseScale = targetH / charPixelH;
         this.scene._baseScale = baseScale;
 
@@ -1567,7 +1566,7 @@ class Game {
         this.npcs = npcImages.map((img, i) => {
             const sp = (img.width === 680 && img.height === 844)
                 ? new AnimatedSprite(img, 3, 4, 136, 211)
-                : new SingleImageSprite(img);
+                : new AnimatedSprite(img, 3, 4);
             return new NPC(sp, this.scene, config.npcs[i] || `NPC ${i + 1}`);
         });
 
