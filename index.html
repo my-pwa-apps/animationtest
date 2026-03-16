@@ -661,7 +661,7 @@ class AssetGenerator {
     }
 
     _npcPrompt(desc) {
-        return `single 2D RPG game character, ${desc}, front-facing full body, centered, clean transparent background, cartoon game art style, one character only`;
+        return `single 2D game character, ${desc}, full body portrait, facing forward, arms at sides, no extra objects, no weapons on ground, solid flat color background, cartoon RPG art`;
     }
 
     _emit(data) { this.onStatus(data); }
@@ -700,10 +700,10 @@ function imageToData(img) {
 }
 
 /**
- * Remove white/near-white background from an image, making those pixels transparent.
- * Returns a new Image with transparency.
+ * Remove solid-color backgrounds (white, grey, or any low-saturation uniform color).
+ * Uses a two-pass approach: detect the dominant bg color, then remove similar pixels.
  */
-function removeWhiteBackground(img, threshold = 230) {
+function removeWhiteBackground(img) {
     const c = document.createElement('canvas');
     c.width = img.width;
     c.height = img.height;
@@ -711,11 +711,29 @@ function removeWhiteBackground(img, threshold = 230) {
     ctx.drawImage(img, 0, 0);
     const data = ctx.getImageData(0, 0, c.width, c.height);
     const d = data.data;
+
+    // Sample corners to detect background color
+    const corners = [
+        0, // top-left
+        (c.width - 1) * 4, // top-right
+        ((c.height - 1) * c.width) * 4, // bottom-left
+        ((c.height - 1) * c.width + c.width - 1) * 4 // bottom-right
+    ];
+    let bgR = 0, bgG = 0, bgB = 0;
+    for (const idx of corners) { bgR += d[idx]; bgG += d[idx+1]; bgB += d[idx+2]; }
+    bgR = Math.round(bgR / 4); bgG = Math.round(bgG / 4); bgB = Math.round(bgB / 4);
+
+    // Remove pixels similar to background color (tolerance-based)
+    const tolerance = 40;
     for (let i = 0; i < d.length; i += 4) {
-        if (d[i] > threshold && d[i + 1] > threshold && d[i + 2] > threshold) {
+        const dr = Math.abs(d[i] - bgR);
+        const dg = Math.abs(d[i+1] - bgG);
+        const db = Math.abs(d[i+2] - bgB);
+        if (dr < tolerance && dg < tolerance && db < tolerance) {
             d[i + 3] = 0;
         }
     }
+
     ctx.putImageData(data, 0, 0);
     const newImg = new Image();
     newImg.src = c.toDataURL();
@@ -941,7 +959,8 @@ class Scene {
     /** Perspective scale: smaller at top, full size at bottom. */
     getDepthScale(y) {
         const t = Math.max(0, Math.min(1, (y - this.height * 0.35) / (this.height * 0.60)));
-        return 0.35 + t * 0.65;
+        const perspective = 0.35 + t * 0.65;
+        return perspective * (this._baseScale || 1);
     }
 
     drawBackground(ctx) { ctx.drawImage(this.bg, 0, 0); }
@@ -1532,6 +1551,13 @@ class Game {
         const playerSprite = isLegacySheet
             ? new AnimatedSprite(pImg, 3, 4, 136, 211)
             : (playerSpriteImg ? new AnimatedSprite(pImg) : new SingleImageSprite(pImg));
+
+        // Determine the character's pixel height for scaling
+        // AI images are ~1024px, we want them to appear ~80-120px on a 1024px background
+        const charPixelH = isLegacySheet ? 211 : (playerSpriteImg ? pImg.height / 4 : pImg.height);
+        const targetH = bgImg.height * 0.12; // character should be ~12% of scene height
+        const baseScale = targetH / charPixelH;
+        this.scene._baseScale = baseScale;
 
         this.player = new Player(playerSprite, this.scene);
         this.player.x = bgImg.width * 0.5;
