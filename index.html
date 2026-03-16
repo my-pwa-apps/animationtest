@@ -661,7 +661,7 @@ class AssetGenerator {
     }
 
     _npcPrompt(desc) {
-        return `pixel art RPG character sprite sheet, ${desc}, chibi style, 3 columns 4 rows grid on transparent background. Row 1: front-facing walk cycle 3 frames. Row 2: right-facing walk cycle 3 frames. Row 3: left-facing walk cycle 3 frames. Row 4: back-facing walk cycle 3 frames. Each cell same size, consistent character proportions, retro 16-bit JRPG style`;
+        return `one single RPG game character, ${desc}, front view, full body, standing pose, centered in frame, plain solid white background, 2D cartoon game art, chibi proportions, no text, nothing else in image`;
     }
 
     _emit(data) { this.onStatus(data); }
@@ -714,16 +714,16 @@ function removeWhiteBackground(img) {
 
     // Sample corners to detect background color
     const corners = [
-        0, // top-left
-        (c.width - 1) * 4, // top-right
-        ((c.height - 1) * c.width) * 4, // bottom-left
-        ((c.height - 1) * c.width + c.width - 1) * 4 // bottom-right
+        0,
+        (c.width - 1) * 4,
+        ((c.height - 1) * c.width) * 4,
+        ((c.height - 1) * c.width + c.width - 1) * 4
     ];
     let bgR = 0, bgG = 0, bgB = 0;
     for (const idx of corners) { bgR += d[idx]; bgG += d[idx+1]; bgB += d[idx+2]; }
     bgR = Math.round(bgR / 4); bgG = Math.round(bgG / 4); bgB = Math.round(bgB / 4);
 
-    // Remove pixels similar to background color (tolerance-based)
+    // Remove pixels similar to background color
     const tolerance = 40;
     for (let i = 0; i < d.length; i += 4) {
         const dr = Math.abs(d[i] - bgR);
@@ -735,8 +735,35 @@ function removeWhiteBackground(img) {
     }
 
     ctx.putImageData(data, 0, 0);
+
+    // Crop to non-transparent bounding box
+    const trimmed = ctx.getImageData(0, 0, c.width, c.height);
+    const td = trimmed.data;
+    let minX = c.width, minY = c.height, maxX = 0, maxY = 0;
+    for (let y = 0; y < c.height; y++) {
+        for (let x = 0; x < c.width; x++) {
+            if (td[(y * c.width + x) * 4 + 3] > 10) {
+                if (x < minX) minX = x;
+                if (x > maxX) maxX = x;
+                if (y < minY) minY = y;
+                if (y > maxY) maxY = y;
+            }
+        }
+    }
+    const cw = maxX - minX + 1;
+    const ch = maxY - minY + 1;
+    if (cw < 10 || ch < 10) { // fallback if crop fails
+        const newImg = new Image();
+        newImg.src = c.toDataURL();
+        return new Promise(resolve => { newImg.onload = () => resolve(newImg); });
+    }
+    const cropped = document.createElement('canvas');
+    cropped.width = cw;
+    cropped.height = ch;
+    cropped.getContext('2d').drawImage(c, minX, minY, cw, ch, 0, 0, cw, ch);
+
     const newImg = new Image();
-    newImg.src = c.toDataURL();
+    newImg.src = cropped.toDataURL();
     return new Promise(resolve => { newImg.onload = () => resolve(newImg); });
 }
 
@@ -1546,14 +1573,14 @@ class Game {
         const pImg = playerSpriteImg || npcImages[0];
         if (!pImg) { alert('No sprite images available.'); return; }
 
-        // All sprites are 3×4 grid sheets (legacy or AI-generated)
+        // Legacy local spritesheets use AnimatedSprite; AI-generated use SingleImageSprite
         const isLegacySheet = (pImg.width === 680 && pImg.height === 844);
         const playerSprite = isLegacySheet
             ? new AnimatedSprite(pImg, 3, 4, 136, 211)
-            : new AnimatedSprite(pImg, 3, 4);
+            : (playerSpriteImg ? new AnimatedSprite(pImg, 3, 4, 136, 211) : new SingleImageSprite(pImg));
 
         // Scale characters to ~12% of scene height
-        const charPixelH = isLegacySheet ? 211 : Math.floor(pImg.height / 4);
+        const charPixelH = isLegacySheet ? 211 : (playerSpriteImg ? 211 : pImg.height);
         const targetH = bgImg.height * 0.12;
         const baseScale = targetH / charPixelH;
         this.scene._baseScale = baseScale;
@@ -1562,11 +1589,11 @@ class Game {
         this.player.x = bgImg.width * 0.5;
         this.player.y = bgImg.height * 0.75;
 
-        // NPCs
+        // NPCs — AI-generated images use SingleImageSprite
         this.npcs = npcImages.map((img, i) => {
             const sp = (img.width === 680 && img.height === 844)
                 ? new AnimatedSprite(img, 3, 4, 136, 211)
-                : new AnimatedSprite(img, 3, 4);
+                : new SingleImageSprite(img);
             return new NPC(sp, this.scene, config.npcs[i] || `NPC ${i + 1}`);
         });
 
