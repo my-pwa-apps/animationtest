@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Village Adventure</title>
+    <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; background: #0a0a1a; overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+        }
+        canvas { image-rendering: pixelated; image-rendering: crisp-edges; cursor: crosshair; }
+
+        /* ── Setup Overlay ── */
+        #setup-overlay {
+            position: fixed; inset: 0; background: rgba(5,5,20,0.95);
+            display: flex; justify-content: center; align-items: center;
+            z-index: 100; overflow-y: auto; padding: 20px;
+        }
+        #setup-overlay.hidden { display: none; }
+        .setup-card {
+            background: linear-gradient(135deg, #1a1a2e, #16213e);
+            border: 1px solid #2a2a4a; border-radius: 16px;
+            padding: 36px; max-width: 560px; width: 100%;
+            color: #c8cad0; box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+        }
+        .setup-card h1 {
+            font-size: 28px; margin-bottom: 4px;
+            background: linear-gradient(90deg, #a78bfa, #60a5fa);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .setup-card .subtitle { color: #666; font-size: 13px; margin-bottom: 24px; }
+        .field { margin-bottom: 18px; }
+        .field label { display: block; font-size: 13px; font-weight: 600; color: #9ca3af; margin-bottom: 6px; }
+        .field input, .field select, .field textarea {
+            width: 100%; padding: 10px 14px; background: #0f0f23;
+            border: 1px solid #2a2a4a; border-radius: 8px;
+            color: #e0e0e0; font-size: 14px; outline: none;
+            transition: border-color 0.2s;
+        }
+        .field input:focus, .field select:focus, .field textarea:focus { border-color: #6366f1; }
+        .field .hint { font-size: 11px; color: #555; margin-top: 4px; }
+        .field-row { display: flex; gap: 12px; }
+        .field-row .field { flex: 1; }
+
+        .npc-list { margin-bottom: 8px; }
+        .npc-item { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+        .npc-item input { flex: 1; }
+        .npc-item button {
+            background: #dc2626; border: none; color: white;
+            width: 28px; height: 28px; border-radius: 6px; cursor: pointer;
+            font-size: 16px; line-height: 1; flex-shrink: 0;
+        }
+
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center;
+            padding: 12px 24px; border: none; border-radius: 10px;
+            font-size: 15px; font-weight: 600; cursor: pointer;
+            transition: all 0.2s; width: 100%;
+        }
+        .btn-primary {
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            color: white; margin-bottom: 10px;
+        }
+        .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 16px rgba(99,102,241,0.4); }
+        .btn-secondary { background: #1e293b; color: #94a3b8; border: 1px solid #334155; }
+        .btn-secondary:hover { background: #273548; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-add {
+            background: #065f46; color: #6ee7b7; border: none;
+            padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px;
+        }
+        .btn-group { margin-top: 24px; }
+
+        /* ── Auth mode toggle ── */
+        .auth-tabs { display: flex; gap: 0; margin-bottom: 18px; }
+        .auth-tab {
+            flex: 1; padding: 8px 12px; text-align: center;
+            background: #0f0f23; border: 1px solid #2a2a4a;
+            color: #666; font-size: 13px; font-weight: 600; cursor: pointer;
+            transition: all 0.2s;
+        }
+        .auth-tab:first-child { border-radius: 8px 0 0 8px; }
+        .auth-tab:last-child { border-radius: 0 8px 8px 0; }
+        .auth-tab.active { background: #1e1b4b; color: #a78bfa; border-color: #6366f1; }
+        .auth-section { display: none; }
+        .auth-section.active { display: block; }
+        #azure-ad-status {
+            font-size: 12px; margin-top: 6px; padding: 6px 10px;
+            border-radius: 6px; display: none;
+        }
+        #azure-ad-status.ok { display: block; background: #064e3b; color: #6ee7b7; }
+        #azure-ad-status.err { display: block; background: #450a0a; color: #fca5a5; }
+
+        /* ── Loading Overlay ── */
+        #loading-overlay {
+            position: fixed; inset: 0; background: rgba(5,5,20,0.97);
+            display: none; flex-direction: column;
+            justify-content: center; align-items: center;
+            z-index: 200; color: #c8cad0;
+        }
+        #loading-overlay.active { display: flex; }
+        .loading-spinner {
+            width: 48px; height: 48px; border: 4px solid #2a2a4a;
+            border-top: 4px solid #6366f1; border-radius: 50%;
+            animation: spin 1s linear infinite; margin-bottom: 20px;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        #loading-status { font-size: 16px; text-align: center; max-width: 400px; }
+        #loading-progress {
+            width: 300px; height: 6px; background: #1e293b;
+            border-radius: 3px; margin-top: 16px; overflow: hidden;
+        }
+        #loading-bar {
+            height: 100%; width: 0%;
+            background: linear-gradient(90deg, #6366f1, #8b5cf6);
+            border-radius: 3px; transition: width 0.3s;
+        }
+        #loading-error {
+            color: #f87171; margin-top: 12px; font-size: 13px;
+            max-width: 400px; text-align: center;
+        }
+
+        /* ── Debug Info ── */
+        #debug-info {
+            position: fixed; top: 8px; left: 8px; color: #0f0;
+            font: 12px monospace; pointer-events: none;
+            text-shadow: 1px 1px 0 #000; z-index: 10; display: none;
+        }
+
+        /* ── Toolbar ── */
+        #toolbar {
+            position: fixed; top: 8px; right: 8px; z-index: 50; display: none;
+        }
+        #toolbar button {
+            background: rgba(30,30,60,0.8); border: 1px solid #333;
+            color: #aaa; padding: 6px 12px; border-radius: 6px;
+            cursor: pointer; font-size: 12px; margin-left: 4px;
+        }
+        #toolbar button:hover { background: rgba(60,60,100,0.8); color: #fff; }
+    </style>
+</head>
+<body>
+
+    <!-- ────── Setup Screen ────── -->
+    <div id="setup-overlay">
+        <div class="setup-card">
+            <h1>&#10024; AI Village Adventure</h1>
+            <p class="subtitle">Generate unique scenes &amp; characters with AI, then watch them come to life</p>
+
+            <!-- Auth mode tabs -->
+            <div class="auth-tabs">
+                <div class="auth-tab active" data-auth="azure">Azure AD</div>
+                <div class="auth-tab" data-auth="apikey">API Key</div>
+            </div>
+
+            <!-- Azure AD auth section -->
+            <div class="auth-section active" id="auth-azure">
+                <div class="field">
+                    <label>Azure OpenAI Endpoint</label>
+                    <input type="text" id="cfg-azure-endpoint"
+                        placeholder="https://your-resource.openai.azure.com/"
+                        value="https://openai-animation-test.openai.azure.com/">
+                </div>
+                <div class="field-row">
+                    <div class="field">
+                        <label>Tenant ID</label>
+                        <input type="text" id="cfg-azure-tenant" placeholder="your-tenant-id">
+                        <div class="hint">Azure AD tenant (directory) ID</div>
+                    </div>
+                    <div class="field">
+                        <label>Client ID</label>
+                        <input type="text" id="cfg-azure-client" placeholder="your-app-client-id">
+                        <div class="hint">App registration client ID</div>
+                    </div>
+                </div>
+                <div class="field-row">
+                    <div class="field">
+                        <label>Deployment Name</label>
+                        <input type="text" id="cfg-azure-deployment" placeholder="e.g. dall-e-3 or gpt-image-1">
+                        <div class="hint">Your Azure OpenAI model deployment name</div>
+                    </div>
+                    <div class="field">
+                        <label>API Version</label>
+                        <input type="text" id="cfg-azure-api-version" value="2025-04-01-preview">
+                    </div>
+                </div>
+                <button class="btn btn-secondary" id="btn-azure-login" type="button"
+                    style="margin-bottom:8px;">&#128274; Sign in with Azure AD</button>
+                <div id="azure-ad-status"></div>
+            </div>
+
+            <!-- API Key auth section -->
+            <div class="auth-section" id="auth-apikey">
+                <div class="field-row">
+                    <div class="field">
+                        <label>API Key</label>
+                        <input type="password" id="cfg-apikey" placeholder="sk-...">
+                        <div class="hint">Stored locally in your browser only</div>
+                    </div>
+                    <div class="field" style="max-width: 170px;">
+                        <label>Model</label>
+                        <select id="cfg-model">
+                            <option value="gpt-image-1">gpt-image-1</option>
+                            <option value="dall-e-3">DALL-E 3</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="field">
+                <label>Scene Theme</label>
+                <input type="text" id="cfg-theme"
+                    placeholder="e.g. medieval village at sunset"
+                    value="charming medieval village with cobblestone paths and flower boxes">
+            </div>
+
+            <div class="field">
+                <label>NPC Characters</label>
+                <div class="npc-list" id="npc-list"></div>
+                <button class="btn-add" id="btn-add-npc">+ Add NPC</button>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-primary" id="btn-generate">&#127912; Generate &amp; Start</button>
+                <button class="btn btn-secondary" id="btn-cached" style="display:none;">&#9654; Resume with Cached Assets</button>
+                <button class="btn btn-secondary" id="btn-local" style="margin-top:6px;">&#128193; Use Local Files Instead</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ────── Loading Overlay ────── -->
+    <div id="loading-overlay">
+        <div class="loading-spinner"></div>
+        <div id="loading-status">Preparing...</div>
+        <div id="loading-progress"><div id="loading-bar"></div></div>
+        <div id="loading-error"></div>
+        <button class="btn btn-secondary" id="btn-cancel-loading"
+            style="margin-top:20px;width:auto;padding:8px 20px;">Cancel</button>
+    </div>
+
+    <!-- ────── Toolbar (visible during game) ────── -->
+    <div id="toolbar">
+        <button id="btn-regen" title="Regenerate assets">&#128260; Regenerate</button>
+    </div>
+
+    <!-- ────── Game ────── -->
+    <div id="debug-info"></div>
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+// ═══════════════════════════════════════════════════════════════════════
+//  ASSET DATABASE  –  IndexedDB cache for generated images & config
+// ═══════════════════════════════════════════════════════════════════════
+
+class AssetDB {
+    constructor(dbName = 'aiVillageAssets', version = 1) {
+        this.dbName = dbName;
+        this.version = version;
+        this.db = null;
+    }
+
+    open() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(this.dbName, this.version);
+            req.onupgradeneeded = (e) => {
+                const db = e.target.result;
+                if (!db.objectStoreNames.contains('assets')) db.createObjectStore('assets');
+                if (!db.objectStoreNames.contains('config')) db.createObjectStore('config');
+            };
+            req.onsuccess = (e) => { this.db = e.target.result; resolve(); };
+            req.onerror = (e) => reject(e.target.error);
+        });
+    }
+
+    _rw(storeName, mode, fn) {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(storeName, mode);
+            const req = fn(tx.objectStore(storeName));
+            if (mode === 'readonly') {
+                req.onsuccess = () => resolve(req.result);
+                req.onerror = (e) => reject(e.target.error);
+            } else {
+                tx.oncomplete = () => resolve();
+                tx.onerror = (e) => reject(e.target.error);
+            }
+        });
+    }
+
+    save(key, data) { return this._rw('assets', 'readwrite', s => s.put(data, key)); }
+
+    load(key) {
+        return this._rw('assets', 'readonly', s => s.get(key)).then(v => v ?? null);
+    }
+
+    async has(key) { return (await this.load(key)) !== null; }
+
+    saveConfig(cfg) { return this._rw('config', 'readwrite', s => s.put(cfg, 'main')); }
+
+    loadConfig() {
+        return this._rw('config', 'readonly', s => s.get('main')).then(v => v ?? null);
+    }
+
+    clear() {
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(['assets', 'config'], 'readwrite');
+            tx.objectStore('assets').clear();
+            tx.objectStore('config').clear();
+            tx.oncomplete = () => resolve();
+            tx.onerror = (e) => reject(e.target.error);
+        });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  AI PROVIDER  –  calls OpenAI image-generation API
+// ═══════════════════════════════════════════════════════════════════════
+
+class AIProvider {
+    /**
+     * @param {object} opts
+     * @param {'openai'|'azure'} opts.mode
+     * @param {string}           [opts.apiKey]           - for openai mode
+     * @param {string}           [opts.model]            - for openai mode
+     * @param {string}           [opts.azureEndpoint]    - for azure mode
+     * @param {string}           [opts.azureDeployment]  - for azure mode
+     * @param {string}           [opts.azureApiVersion]  - for azure mode
+     * @param {string}           [opts.azureAccessToken] - for azure mode (Azure AD bearer)
+     */
+    constructor(opts) {
+        this.mode             = opts.mode || 'openai';
+        // OpenAI direct
+        this.apiKey           = opts.apiKey;
+        this.model            = opts.model || 'gpt-image-1';
+        // Azure
+        this.azureEndpoint    = (opts.azureEndpoint || '').replace(/\/+$/, '');
+        this.azureDeployment  = opts.azureDeployment || '';
+        this.azureApiVersion  = opts.azureApiVersion || '2025-04-01-preview';
+        this.azureAccessToken = opts.azureAccessToken || '';
+    }
+
+    async generateImage(prompt, size = '1024x1024') {
+        if (this.mode === 'azure') return this._azureGenerate(prompt, size);
+        return this._openaiGenerate(prompt, size);
+    }
+
+    /* ── OpenAI direct ── */
+    async _openaiGenerate(prompt, size) {
+        const body = { model: this.model, prompt, n: 1, size };
+        if (this.model.startsWith('dall-e')) body.response_format = 'b64_json';
+
+        const resp = await fetch('https://api.openai.com/v1/images/generations', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+        return this._handleResponse(resp);
+    }
+
+    /* ── Azure OpenAI ── */
+    async _azureGenerate(prompt, size) {
+        const url = `${this.azureEndpoint}/openai/deployments/${encodeURIComponent(this.azureDeployment)}/images/generations?api-version=${encodeURIComponent(this.azureApiVersion)}`;
+        const body = { prompt, n: 1, size };
+
+        const resp = await fetch(url, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.azureAccessToken}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(body),
+        });
+        return this._handleResponse(resp);
+    }
+
+    /* ── Shared response handling ── */
+    async _handleResponse(resp) {
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(
+                `API error ${resp.status}: ${err.error?.message || resp.statusText}`
+            );
+        }
+        const json = await resp.json();
+        const item = json.data[0];
+
+        if (item.b64_json) return this._b64ToBlob(item.b64_json);
+        if (item.url) {
+            const r = await fetch(item.url);
+            return await r.blob();
+        }
+        throw new Error('No image data in API response');
+    }
+
+    _b64ToBlob(b64) {
+        const bin = atob(b64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        return new Blob([bytes], { type: 'image/png' });
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ASSET GENERATOR  –  orchestrates AI calls for all needed assets
+// ═══════════════════════════════════════════════════════════════════════
+
+class AssetGenerator {
+    constructor(aiProvider, assetDB, onStatus) {
+        this.ai = aiProvider;
+        this.db = assetDB;
+        this.onStatus = onStatus || (() => {});
+        this.cancelled = false;
+    }
+
+    cancel() { this.cancelled = true; }
+
+    async generateAll(config) {
+        const total = 1 + config.npcs.length;
+        let done = 0;
+        const tick = () => { done++; this._emit({ progress: done / total }); };
+
+        // 1 ── Background
+        this._emit({ message: 'Generating background scene...' });
+        const isDalle = this.ai.mode === 'openai' && this.ai.model.startsWith('dall-e');
+        const bgSize = isDalle ? '1792x1024' : '1024x1024';
+        const bgBlob = await this.ai.generateImage(this._bgPrompt(config.theme), bgSize);
+        if (this.cancelled) return;
+        await this.db.save('background', bgBlob);
+        tick();
+
+        // 2 ── NPC sprite sheets
+        for (let i = 0; i < config.npcs.length; i++) {
+            if (this.cancelled) return;
+            this._emit({
+                message: `Generating NPC ${i + 1}/${config.npcs.length}: ${config.npcs[i]}...`
+            });
+            const blob = await this.ai.generateImage(
+                this._npcPrompt(config.npcs[i]),
+                '1024x1024'
+            );
+            if (this.cancelled) return;
+            await this.db.save(`npc_${i}`, blob);
+            tick();
+        }
+
+        await this.db.saveConfig(config);
+        this._emit({ message: 'Done!' });
+    }
+
+    _bgPrompt(theme) {
+        return (
+            `A beautiful 2D game background scene depicting: ${theme}. ` +
+            `Three-quarter top-down perspective with warm lighting. Rich painted style. ` +
+            `The bottom half is clear open ground (paths, grass, cobblestones) where characters can walk. ` +
+            `The upper portion has buildings, trees, or scenic elements. ` +
+            `No people, no characters, no text, no UI. Detailed vibrant game art.`
+        );
+    }
+
+    _npcPrompt(desc) {
+        return (
+            `A 2D RPG character sprite sheet for: ${desc}. ` +
+            `The image is divided into a precise grid of 3 columns and 4 rows (12 cells). ` +
+            `Row 1 (top): character facing the viewer (front view), 3 walking cycle frames left to right. ` +
+            `Row 2: character facing right, 3 walking frames. ` +
+            `Row 3: character facing left, 3 walking frames. ` +
+            `Row 4 (bottom): character facing away (back view), 3 walking frames. ` +
+            `Same character in every cell, consistent proportions. ` +
+            `Clean solid white background. Pixel-art game style, full body visible.`
+        );
+    }
+
+    _emit(data) { this.onStatus(data); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  IMAGE UTILITIES
+// ═══════════════════════════════════════════════════════════════════════
+
+function blobToImage(blob) {
+    return new Promise((resolve, reject) => {
+        const url = URL.createObjectURL(blob);
+        const img = new Image();
+        img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+        img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Failed to decode image blob')); };
+        img.src = url;
+    });
+}
+
+function loadImage(src) {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('Could not load: ' + src));
+        img.src = src;
+    });
+}
+
+function imageToData(img) {
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const cx = c.getContext('2d');
+    cx.drawImage(img, 0, 0);
+    return cx.getImageData(0, 0, img.width, img.height);
+}
+
+/** Auto-generate a walkability mask (bottom ~55 % walkable). */
+function generateWalkmask(bgImg) {
+    const w = bgImg.width, h = bgImg.height;
+    const mask = new ImageData(w, h);
+    const tStart = h * 0.38;   // transition begins
+    const tEnd   = h * 0.50;   // fully walkable below here
+
+    for (let y = 0; y < h; y++) {
+        let v = 0;
+        if (y >= tEnd) v = 255;
+        else if (y >= tStart) v = Math.round(((y - tStart) / (tEnd - tStart)) * 255);
+
+        for (let x = 0; x < w; x++) {
+            const idx = (y * w + x) * 4;
+            mask.data[idx]     = v;
+            mask.data[idx + 1] = v;
+            mask.data[idx + 2] = v;
+            mask.data[idx + 3] = 255;
+        }
+    }
+    return mask;
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ANIMATION
+// ═══════════════════════════════════════════════════════════════════════
+
+const DIR       = { DOWN: 0, LEFT: 1, RIGHT: 2, UP: 3 };
+const DIR_NAMES = ['down', 'left', 'right', 'up'];
+const ROW_MAP   = { [DIR.DOWN]: 0, [DIR.RIGHT]: 1, [DIR.LEFT]: 2, [DIR.UP]: 3 };
+
+class Animation {
+    constructor(frames, frameDuration, loop = true) {
+        this.frames = frames;
+        this.frameDuration = frameDuration;
+        this.loop = loop;
+        this.elapsed = 0;
+        this.frameIndex = 0;
+    }
+
+    reset() { this.elapsed = 0; this.frameIndex = 0; }
+
+    update(dt) {
+        this.elapsed += dt;
+        if (this.elapsed >= this.frameDuration) {
+            this.elapsed -= this.frameDuration;
+            this.frameIndex++;
+            if (this.frameIndex >= this.frames.length) {
+                this.frameIndex = this.loop ? 0 : this.frames.length - 1;
+            }
+        }
+    }
+
+    get currentFrame() { return this.frames[this.frameIndex]; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  ANIMATED SPRITE  –  works with any sprite-sheet grid
+//  Accepts explicit frameW / frameH for legacy sheets whose image
+//  dimensions don't divide evenly by cols/rows.
+// ═══════════════════════════════════════════════════════════════════════
+
+class AnimatedSprite {
+    constructor(image, cols = 3, rows = 4, frameW, frameH) {
+        this.image   = image;
+        this.cols    = cols;
+        this.rows    = rows;
+        this.frameW  = frameW || Math.floor(image.width  / cols);
+        this.frameH  = frameH || Math.floor(image.height / rows);
+        this.animations  = {};
+        this.currentAnim = null;
+        this.currentName = '';
+        this._buildAnimations();
+    }
+
+    _buildAnimations() {
+        for (let dir = 0; dir < 4; dir++) {
+            const name = DIR_NAMES[dir];
+            this.animations[`idle_${name}`] = new Animation([0], 1, false);
+
+            const walk = [];
+            for (let c = 0; c < this.cols; c++) walk.push(c);
+            if (this.cols >= 3) walk.push(1); // ping-pong middle
+            this.animations[`walk_${name}`] = new Animation(walk, 0.15, true);
+        }
+    }
+
+    play(name) {
+        if (this.currentName === name) return;
+        this.currentName = name;
+        this.currentAnim = this.animations[name];
+        if (this.currentAnim) this.currentAnim.reset();
+    }
+
+    update(dt) { if (this.currentAnim) this.currentAnim.update(dt); }
+
+    draw(ctx, x, y, scale) {
+        if (!this.currentAnim) return;
+        const dirName  = this.currentName.split('_')[1];
+        const dirIndex = DIR_NAMES.indexOf(dirName);
+        if (dirIndex < 0) return;
+
+        const col  = this.currentAnim.currentFrame;
+        const row  = ROW_MAP[dirIndex];
+        const srcX = col * this.frameW;
+        const srcY = row * this.frameH;
+        const dw   = this.frameW * scale;
+        const dh   = this.frameH * scale;
+
+        // Feet at (x, y): centered horizontally, bottom-aligned vertically
+        ctx.drawImage(
+            this.image,
+            srcX, srcY, this.frameW, this.frameH,
+            x - dw / 2, y - dh,
+            dw, dh
+        );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SCENE
+// ═══════════════════════════════════════════════════════════════════════
+
+class Scene {
+    constructor(bgImage, walkmaskData) {
+        this.bg       = bgImage;
+        this.walkmask = walkmaskData;
+        this.width    = bgImage.width;
+        this.height   = bgImage.height;
+    }
+
+    isWalkable(x, y) {
+        if (!this.walkmask) return true;
+        const ix = Math.round(x), iy = Math.round(y);
+        if (ix < 0 || iy < 0 || ix >= this.width || iy >= this.height) return false;
+        return this.walkmask.data[(iy * this.width + ix) * 4] > 128;
+    }
+
+    findNearestWalkable(x, y, maxRadius = 100) {
+        if (this.isWalkable(x, y)) return { x, y };
+        for (let r = 1; r <= maxRadius; r++) {
+            for (let a = 0; a < Math.PI * 2; a += Math.PI / 16) {
+                const tx = Math.round(x + Math.cos(a) * r);
+                const ty = Math.round(y + Math.sin(a) * r);
+                if (this.isWalkable(tx, ty)) return { x: tx, y: ty };
+            }
+        }
+        return null;
+    }
+
+    findRandomWalkable() {
+        for (let i = 0; i < 300; i++) {
+            const x = Math.random() * this.width;
+            const y = this.height * 0.52 + Math.random() * this.height * 0.44;
+            if (this.isWalkable(x, y)) return { x, y };
+        }
+        return { x: this.width / 2, y: this.height * 0.75 };
+    }
+
+    /** Perspective scale: smaller at top, full size at bottom. */
+    getDepthScale(y) {
+        const t = Math.max(0, Math.min(1, (y - this.height * 0.35) / (this.height * 0.60)));
+        return 0.35 + t * 0.65;
+    }
+
+    drawBackground(ctx) { ctx.drawImage(this.bg, 0, 0); }
+
+    drawWalkmaskOverlay(ctx) {
+        if (!this.walkmask) return;
+        const id = ctx.createImageData(this.width, this.height);
+        for (let i = 0; i < this.walkmask.data.length; i += 4) {
+            const w = this.walkmask.data[i] > 128;
+            id.data[i]     = w ? 0 : 255;
+            id.data[i + 1] = w ? 255 : 0;
+            id.data[i + 2] = 0;
+            id.data[i + 3] = 60;
+        }
+        ctx.putImageData(id, 0, 0);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  NPC  –  autonomous wandering character
+// ═══════════════════════════════════════════════════════════════════════
+
+const NPC_STATE = { IDLE: 0, WALKING: 1 };
+
+class NPC {
+    constructor(sprite, scene, name) {
+        this.sprite = sprite;
+        this.scene  = scene;
+        this.name   = name;
+
+        this.x = 0; this.y = 0;
+        this.targetX = 0; this.targetY = 0;
+        this.speed   = 40 + Math.random() * 40;           // 40–80 px/s
+        this.facing  = DIR.DOWN;
+        this.scale   = 0.7;
+        this.state   = NPC_STATE.IDLE;
+        this.idleTimer = 1 + Math.random() * 3;
+
+        // Spawn at a random walkable position
+        const pos = scene.findRandomWalkable();
+        this.x = pos.x;
+        this.y = pos.y;
+        this.sprite.play('idle_down');
+    }
+
+    update(dt) {
+        this.sprite.update(dt);
+        this.scale = this.scene.getDepthScale(this.y);
+
+        if (this.state === NPC_STATE.IDLE) {
+            this.idleTimer -= dt;
+            if (this.idleTimer <= 0) this._pickTarget();
+        } else {
+            this._moveToward(dt);
+        }
+    }
+
+    /* ── private ── */
+
+    _pickTarget() {
+        const dest = this.scene.findRandomWalkable();
+        const dx = dest.x - this.x, dy = dest.y - this.y;
+        const dist = Math.hypot(dx, dy);
+        const maxDist = 300;
+
+        if (dist > maxDist) {
+            const nx = dx / dist, ny = dy / dist;
+            const tx = this.x + nx * maxDist;
+            const ty = this.y + ny * maxDist;
+            const near = this.scene.findNearestWalkable(tx, ty);
+            if (!near) { this.idleTimer = 2; return; }
+            this.targetX = near.x;
+            this.targetY = near.y;
+        } else {
+            this.targetX = dest.x;
+            this.targetY = dest.y;
+        }
+
+        this.state = NPC_STATE.WALKING;
+        this._setFacing(this.targetX - this.x, this.targetY - this.y);
+        this.sprite.play(`walk_${DIR_NAMES[this.facing]}`);
+    }
+
+    _moveToward(dt) {
+        const dx = this.targetX - this.x, dy = this.targetY - this.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < 2) {
+            this.x = this.targetX; this.y = this.targetY;
+            this._goIdle(); return;
+        }
+
+        const step = this.speed * dt;
+        const nx = dx / dist, ny = dy / dist;
+        const newX = this.x + nx * Math.min(step, dist);
+        const newY = this.y + ny * Math.min(step, dist);
+
+        if (this.scene.isWalkable(newX, newY)) {
+            this.x = newX; this.y = newY;
+        } else if (this.scene.isWalkable(newX, this.y)) {
+            this.x = newX;
+        } else if (this.scene.isWalkable(this.x, newY)) {
+            this.y = newY;
+        } else {
+            this._goIdle();
+        }
+    }
+
+    _goIdle() {
+        this.state = NPC_STATE.IDLE;
+        this.idleTimer = 2 + Math.random() * 5;
+        this.sprite.play(`idle_${DIR_NAMES[this.facing]}`);
+    }
+
+    _setFacing(dx, dy) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+            this.facing = dx > 0 ? DIR.RIGHT : DIR.LEFT;
+        } else {
+            this.facing = dy > 0 ? DIR.DOWN : DIR.UP;
+        }
+    }
+
+    draw(ctx) { this.sprite.draw(ctx, this.x, this.y, this.scale); }
+
+    get feetY() { return this.y; }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  PLAYER  –  click-to-move character
+// ═══════════════════════════════════════════════════════════════════════
+
+class Player {
+    constructor(sprite, scene) {
+        this.sprite = sprite;
+        this.scene  = scene;
+        this.x = 0; this.y = 0;
+        this.targetX = 0; this.targetY = 0;
+        this.speed  = 120;
+        this.moving = false;
+        this.facing = DIR.DOWN;
+        this.scale  = 0.8;
+        this.sprite.play('idle_down');
+    }
+
+    moveTo(tx, ty) {
+        let dest = { x: tx, y: ty };
+        if (!this.scene.isWalkable(tx, ty)) {
+            dest = this.scene.findNearestWalkable(tx, ty);
+            if (!dest) return;
+        }
+        this.targetX = dest.x;
+        this.targetY = dest.y;
+        this.moving  = true;
+        this._setFacing(dest.x - this.x, dest.y - this.y);
+        this.sprite.play(`walk_${DIR_NAMES[this.facing]}`);
+    }
+
+    update(dt) {
+        this.sprite.update(dt);
+        this.scale = this.scene.getDepthScale(this.y);
+        if (!this.moving) return;
+
+        const dx = this.targetX - this.x, dy = this.targetY - this.y;
+        const dist = Math.hypot(dx, dy);
+
+        if (dist < 2) {
+            this.x = this.targetX; this.y = this.targetY;
+            this.moving = false;
+            this.sprite.play(`idle_${DIR_NAMES[this.facing]}`);
+            return;
+        }
+
+        const step = this.speed * dt;
+        const nx = dx / dist, ny = dy / dist;
+        const newX = this.x + nx * Math.min(step, dist);
+        const newY = this.y + ny * Math.min(step, dist);
+
+        if (this.scene.isWalkable(newX, newY)) {
+            this.x = newX; this.y = newY;
+        } else if (this.scene.isWalkable(newX, this.y)) {
+            this.x = newX;
+        } else if (this.scene.isWalkable(this.x, newY)) {
+            this.y = newY;
+        } else {
+            this.moving = false;
+            this.sprite.play(`idle_${DIR_NAMES[this.facing]}`);
+        }
+    }
+
+    draw(ctx) { this.sprite.draw(ctx, this.x, this.y, this.scale); }
+
+    get feetY() { return this.y; }
+
+    _setFacing(dx, dy) {
+        if (Math.abs(dx) > Math.abs(dy)) {
+            this.facing = dx > 0 ? DIR.RIGHT : DIR.LEFT;
+        } else {
+            this.facing = dy > 0 ? DIR.DOWN : DIR.UP;
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  GAME  –  orchestrates setup, generation, rendering
+// ═══════════════════════════════════════════════════════════════════════
+
+class Game {
+    constructor() {
+        this.canvas  = document.getElementById('gameCanvas');
+        this.ctx     = this.canvas.getContext('2d');
+        this.debugEl = document.getElementById('debug-info');
+
+        this.debug       = false;
+        this.showWalkmask = false;
+        this.scene   = null;
+        this.player  = null;
+        this.npcs    = [];
+        this.lastTime = 0;
+        this._running = false;
+
+        this.clickTarget = null;
+        this.clickFade   = 0;
+        this.db = new AssetDB();
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'F1') { e.preventDefault(); this.debug = !this.debug; }
+            if (e.key === 'F2') { e.preventDefault(); this.showWalkmask = !this.showWalkmask; }
+        });
+    }
+
+    // ── Initialisation ──
+
+    async init() {
+        await this.db.open();
+        const config   = await this.db.loadConfig();
+        const hasCached = config && (await this.db.has('background'));
+
+        if (hasCached) {
+            const btn = document.getElementById('btn-cached');
+            btn.style.display = '';
+            btn.textContent = `\u25B6 Resume: "${config.theme}" (${config.npcs.length} NPCs)`;
+        }
+
+        this._wireSetupUI(config);
+    }
+
+    // ── Setup-screen wiring ──
+
+    _wireSetupUI(savedConfig) {
+        const overlay = document.getElementById('setup-overlay');
+        const npcListEl = document.getElementById('npc-list');
+
+        const defaultNPCs = [
+            'friendly village merchant with an apron',
+            'armored town guard with a spear',
+            'wandering bard carrying a lute',
+        ];
+
+        let npcs = savedConfig?.npcs?.slice() || defaultNPCs.slice();
+
+        const renderNPCs = () => {
+            npcListEl.innerHTML = '';
+            npcs.forEach((desc, i) => {
+                const div = document.createElement('div');
+                div.className = 'npc-item';
+                const inp = document.createElement('input');
+                inp.type = 'text'; inp.value = desc;
+                inp.addEventListener('input', () => { npcs[i] = inp.value; });
+                const btn = document.createElement('button');
+                btn.textContent = '\u00D7';
+                btn.addEventListener('click', () => { npcs.splice(i, 1); renderNPCs(); });
+                div.append(inp, btn);
+                npcListEl.appendChild(div);
+            });
+        };
+        renderNPCs();
+
+        document.getElementById('btn-add-npc').onclick = () => {
+            npcs.push('village peasant');
+            renderNPCs();
+        };
+
+        // ── Auth-tab switching ──
+        let authMode = 'azure';
+        document.querySelectorAll('.auth-tab').forEach(tab => {
+            tab.onclick = () => {
+                authMode = tab.dataset.auth;
+                document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
+                tab.classList.add('active');
+                document.getElementById('auth-azure').classList.toggle('active', authMode === 'azure');
+                document.getElementById('auth-apikey').classList.toggle('active', authMode === 'apikey');
+            };
+        });
+
+        // Restore saved settings
+        const savedKey = localStorage.getItem('ai_village_apikey') || '';
+        document.getElementById('cfg-apikey').value = savedKey;
+        const savedAzure = JSON.parse(localStorage.getItem('ai_village_azure') || '{}');
+        if (savedAzure.endpoint) document.getElementById('cfg-azure-endpoint').value = savedAzure.endpoint;
+        if (savedAzure.tenant)   document.getElementById('cfg-azure-tenant').value = savedAzure.tenant;
+        if (savedAzure.client)   document.getElementById('cfg-azure-client').value = savedAzure.client;
+        if (savedAzure.deployment) document.getElementById('cfg-azure-deployment').value = savedAzure.deployment;
+        if (savedAzure.apiVersion) document.getElementById('cfg-azure-api-version').value = savedAzure.apiVersion;
+
+        // ── MSAL / Azure AD sign-in ──
+        let msalInstance = null;
+        let azureAccessToken = null;
+
+        document.getElementById('btn-azure-login').onclick = async () => {
+            const tenant   = document.getElementById('cfg-azure-tenant').value.trim();
+            const clientId = document.getElementById('cfg-azure-client').value.trim();
+            const statusEl = document.getElementById('azure-ad-status');
+
+            if (!tenant || !clientId) {
+                statusEl.className = 'err';
+                statusEl.textContent = 'Please fill in Tenant ID and Client ID first.';
+                statusEl.style.display = 'block';
+                return;
+            }
+
+            try {
+                msalInstance = new msal.PublicClientApplication({
+                    auth: {
+                        clientId: clientId,
+                        authority: `https://login.microsoftonline.com/${tenant}`,
+                        redirectUri: window.location.origin + window.location.pathname,
+                    },
+                    cache: { cacheLocation: 'localStorage' },
+                });
+
+                await msalInstance.initialize();
+
+                const loginResp = await msalInstance.loginPopup({
+                    scopes: ['https://cognitiveservices.azure.com/.default'],
+                });
+
+                // Get token silently (uses cached login)
+                const tokenResp = await msalInstance.acquireTokenSilent({
+                    scopes: ['https://cognitiveservices.azure.com/.default'],
+                    account: loginResp.account,
+                });
+
+                azureAccessToken = tokenResp.accessToken;
+                statusEl.className = 'ok';
+                statusEl.textContent = `Signed in as ${loginResp.account.username}`;
+                statusEl.style.display = 'block';
+                document.getElementById('btn-azure-login').textContent = '\u2705 Signed in — Re-sign';
+            } catch (err) {
+                statusEl.className = 'err';
+                statusEl.textContent = 'Sign-in failed: ' + (err.message || err);
+                statusEl.style.display = 'block';
+                console.error('MSAL error:', err);
+            }
+        };
+
+        // ── Generate & Start ──
+        document.getElementById('btn-generate').onclick = async () => {
+            const theme = document.getElementById('cfg-theme').value.trim() || 'medieval village';
+            let providerOpts;
+
+            if (authMode === 'azure') {
+                if (!azureAccessToken) {
+                    alert('Please sign in with Azure AD first.');
+                    return;
+                }
+                const endpoint   = document.getElementById('cfg-azure-endpoint').value.trim();
+                const deployment = document.getElementById('cfg-azure-deployment').value.trim();
+                const apiVersion = document.getElementById('cfg-azure-api-version').value.trim();
+                if (!endpoint || !deployment) {
+                    alert('Please fill in the Azure endpoint and deployment name.');
+                    return;
+                }
+                // Persist settings
+                localStorage.setItem('ai_village_azure', JSON.stringify({
+                    endpoint, deployment, apiVersion,
+                    tenant: document.getElementById('cfg-azure-tenant').value.trim(),
+                    client: document.getElementById('cfg-azure-client').value.trim(),
+                }));
+                providerOpts = {
+                    mode: 'azure',
+                    azureEndpoint: endpoint,
+                    azureDeployment: deployment,
+                    azureApiVersion: apiVersion,
+                    azureAccessToken,
+                };
+            } else {
+                const apiKey = document.getElementById('cfg-apikey').value.trim();
+                if (!apiKey) { alert('Please enter an API key.'); return; }
+                localStorage.setItem('ai_village_apikey', apiKey);
+                const model = document.getElementById('cfg-model').value;
+                providerOpts = { mode: 'openai', apiKey, model };
+            }
+
+            const config = { theme, npcs: npcs.filter(n => n.trim()), providerOpts };
+            overlay.classList.add('hidden');
+            await this._generateAndStart(providerOpts, config);
+        };
+
+        // ── Resume cached ──
+        document.getElementById('btn-cached').onclick = async () => {
+            overlay.classList.add('hidden');
+            await this._startFromCache();
+        };
+
+        // ── Use local files ──
+        document.getElementById('btn-local').onclick = async () => {
+            overlay.classList.add('hidden');
+            await this._startFromLocal();
+        };
+
+        // ── Regenerate (toolbar) ──
+        document.getElementById('btn-regen').onclick = () => {
+            this._stopLoop();
+            document.getElementById('toolbar').style.display = 'none';
+            overlay.classList.remove('hidden');
+        };
+    }
+
+    // ── Generation flow ──
+
+    async _generateAndStart(providerOpts, config) {
+        const loadingEl = document.getElementById('loading-overlay');
+        const statusEl  = document.getElementById('loading-status');
+        const barEl     = document.getElementById('loading-bar');
+        const errorEl   = document.getElementById('loading-error');
+
+        loadingEl.classList.add('active');
+        errorEl.textContent = '';
+        barEl.style.width = '0%';
+
+        const ai = new AIProvider(providerOpts);
+        const gen = new AssetGenerator(ai, this.db, ({ message, progress }) => {
+            if (message !== undefined) statusEl.textContent = message;
+            if (progress !== undefined) barEl.style.width = (progress * 100) + '%';
+        });
+
+        document.getElementById('btn-cancel-loading').onclick = () => {
+            gen.cancel();
+            loadingEl.classList.remove('active');
+            document.getElementById('setup-overlay').classList.remove('hidden');
+        };
+
+        try {
+            await this.db.clear();
+            await gen.generateAll(config);
+            if (gen.cancelled) return;
+            loadingEl.classList.remove('active');
+            await this._startFromCache();
+        } catch (err) {
+            errorEl.textContent = err.message;
+            statusEl.textContent = 'Generation failed';
+            console.error(err);
+        }
+    }
+
+    // ── Start from IndexedDB cache ──
+
+    async _startFromCache() {
+        const loadingEl = document.getElementById('loading-overlay');
+        const statusEl  = document.getElementById('loading-status');
+        loadingEl.classList.add('active');
+        statusEl.textContent = 'Loading cached assets\u2026';
+
+        try {
+            const config = await this.db.loadConfig();
+            if (!config) throw new Error('No cached config found');
+
+            const bgBlob = await this.db.load('background');
+            if (!bgBlob) throw new Error('No cached background found');
+            const bgImg = await blobToImage(bgBlob);
+            const walkmask = generateWalkmask(bgImg);
+
+            const npcImages = [];
+            for (let i = 0; i < config.npcs.length; i++) {
+                const blob = await this.db.load(`npc_${i}`);
+                if (blob) npcImages.push(await blobToImage(blob));
+            }
+
+            loadingEl.classList.remove('active');
+            this._startGame(bgImg, walkmask, npcImages, config, null);
+        } catch (err) {
+            statusEl.textContent = 'Load failed: ' + err.message;
+            console.error(err);
+        }
+    }
+
+    // ── Start from local files on disk ──
+
+    async _startFromLocal() {
+        const loadingEl = document.getElementById('loading-overlay');
+        const statusEl  = document.getElementById('loading-status');
+        loadingEl.classList.add('active');
+        statusEl.textContent = 'Loading local assets\u2026';
+
+        try {
+            const bgImg = await loadImage('background.png');
+
+            const walkmaskImg = await loadImage('walkmask.png').catch(() => null);
+            const walkmask = walkmaskImg ? imageToData(walkmaskImg) : generateWalkmask(bgImg);
+
+            const spriteImg = await loadImage('kqspritesheet_clean.png').catch(() =>
+                loadImage('spritesheet.png')
+            );
+
+            loadingEl.classList.remove('active');
+
+            // Re-use the same sprite for several NPCs in local mode
+            const config = {
+                theme: 'local',
+                npcs: ['Village NPC', 'Village NPC'],
+            };
+            this._startGame(bgImg, walkmask, [spriteImg, spriteImg], config, spriteImg);
+        } catch (err) {
+            statusEl.textContent = 'Failed: ' + err.message;
+            console.error(err);
+        }
+    }
+
+    // ── Shared game-start ──
+
+    _startGame(bgImg, walkmask, npcImages, config, playerSpriteImg) {
+        this.canvas.width  = bgImg.width;
+        this.canvas.height = bgImg.height;
+        this.ctx.imageSmoothingEnabled = false;
+        this._fitCanvas();
+        window.addEventListener('resize', () => this._fitCanvas());
+
+        this.scene = new Scene(bgImg, walkmask);
+
+        // Player sprite: use dedicated sheet or first NPC sheet
+        const pImg = playerSpriteImg || npcImages[0];
+        if (!pImg) { alert('No sprite images available.'); return; }
+
+        // Local spritesheets (680×844) need explicit frame dimensions
+        const isLocal = (pImg.width === 680 && pImg.height === 844);
+        const playerSprite = isLocal
+            ? new AnimatedSprite(pImg, 3, 4, 136, 211)
+            : new AnimatedSprite(pImg);
+
+        this.player = new Player(playerSprite, this.scene);
+        this.player.x = bgImg.width * 0.5;
+        this.player.y = bgImg.height * 0.75;
+
+        // NPCs
+        this.npcs = npcImages.map((img, i) => {
+            const sp = (img.width === 680 && img.height === 844)
+                ? new AnimatedSprite(img, 3, 4, 136, 211)
+                : new AnimatedSprite(img);
+            return new NPC(sp, this.scene, config.npcs[i] || `NPC ${i + 1}`);
+        });
+
+        // Click-to-move
+        this.canvas.onclick = (e) => {
+            const rect = this.canvas.getBoundingClientRect();
+            const mx = (e.clientX - rect.left) * (this.canvas.width  / rect.width);
+            const my = (e.clientY - rect.top)  * (this.canvas.height / rect.height);
+            this.player.moveTo(mx, my);
+            this.clickTarget = { x: mx, y: my };
+            this.clickFade = 1;
+        };
+
+        document.getElementById('toolbar').style.display = '';
+
+        this._running = true;
+        this.lastTime = performance.now();
+        requestAnimationFrame((t) => this._loop(t));
+    }
+
+    _stopLoop() { this._running = false; }
+
+    _fitCanvas() {
+        const vw = window.innerWidth, vh = window.innerHeight;
+        const aspect = this.canvas.width / this.canvas.height;
+        let w, h;
+        if (vw / vh > aspect) { h = vh; w = h * aspect; }
+        else { w = vw; h = w / aspect; }
+        this.canvas.style.width  = w + 'px';
+        this.canvas.style.height = h + 'px';
+    }
+
+    // ── Main loop ──
+
+    _loop(now) {
+        if (!this._running) return;
+        const dt = Math.min((now - this.lastTime) / 1000, 0.05);
+        this.lastTime = now;
+
+        // Update
+        this.player.update(dt);
+        for (const n of this.npcs) n.update(dt);
+        if (this.clickFade > 0) this.clickFade -= dt * 2;
+
+        // Render
+        const ctx = this.ctx;
+        ctx.imageSmoothingEnabled = false;
+
+        // 1. Background
+        this.scene.drawBackground(ctx);
+
+        // 2. Walkmask debug overlay
+        if (this.debug && this.showWalkmask) this.scene.drawWalkmaskOverlay(ctx);
+
+        // 3. Depth-sort all characters and draw
+        const allChars = [this.player, ...this.npcs].sort((a, b) => a.feetY - b.feetY);
+        for (const c of allChars) c.draw(ctx);
+
+        // 4. Click indicator
+        if (this.clickTarget && this.clickFade > 0) {
+            ctx.globalAlpha = Math.max(0, this.clickFade);
+            ctx.strokeStyle = '#ff0'; ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(this.clickTarget.x, this.clickTarget.y, 8, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
+
+        // 5. Debug overlay
+        this.debugEl.style.display = this.debug ? 'block' : 'none';
+        if (this.debug) {
+            // Foot anchor
+            ctx.fillStyle = '#0f0';
+            ctx.beginPath();
+            ctx.arc(this.player.x, this.player.y, 3, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Movement line
+            if (this.player.moving) {
+                ctx.strokeStyle = '#0ff'; ctx.lineWidth = 1;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(this.player.x, this.player.y);
+                ctx.lineTo(this.player.targetX, this.player.targetY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // NPC labels
+            ctx.font = '11px monospace';
+            ctx.textAlign = 'center';
+            for (const n of this.npcs) {
+                const dh = n.sprite.frameH * n.scale;
+                ctx.fillStyle = 'rgba(0,0,0,0.6)';
+                const tw = ctx.measureText(n.name).width + 8;
+                ctx.fillRect(n.x - tw / 2, n.y - dh - 16, tw, 14);
+                ctx.fillStyle = '#fff';
+                ctx.fillText(n.name, n.x, n.y - dh - 5);
+            }
+
+            this.debugEl.textContent =
+                `Player: ${this.player.x.toFixed(0)},${this.player.y.toFixed(0)}` +
+                ` scale:${this.player.scale.toFixed(2)}` +
+                ` | NPCs: ${this.npcs.length}` +
+                ` | F1: debug  F2: walkmask`;
+        }
+
+        requestAnimationFrame((t) => this._loop(t));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  BOOTSTRAP
+// ═══════════════════════════════════════════════════════════════════════
+
+const game = new Game();
+game.init().catch(err => {
+    console.error('Init error:', err);
+    const el = document.getElementById('loading-status');
+    el.textContent = 'Error: ' + err.message;
+    document.getElementById('loading-overlay').classList.add('active');
+});
+</script>
+</body>
+</html>
