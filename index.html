@@ -153,12 +153,20 @@
 
             <!-- Auth mode tabs -->
             <div class="auth-tabs">
-                <div class="auth-tab active" data-auth="azure">Azure AD</div>
+                <div class="auth-tab active" data-auth="free">Free (Pollinations)</div>
+                <div class="auth-tab" data-auth="azure">Azure AD</div>
                 <div class="auth-tab" data-auth="apikey">API Key</div>
             </div>
 
+            <!-- Free (Pollinations.ai) section -->
+            <div class="auth-section active" id="auth-free">
+                <div class="hint" style="margin-bottom:12px; color:#6ee7b7; font-size:13px;">
+                    &#10024; No API key needed! Uses <strong>Pollinations.ai</strong> — a free, open AI image generation service.
+                </div>
+            </div>
+
             <!-- Azure AD auth section -->
-            <div class="auth-section active" id="auth-azure">
+            <div class="auth-section" id="auth-azure">
                 <div class="field">
                     <label>Azure OpenAI Endpoint</label>
                     <input type="text" id="cfg-azure-endpoint"
@@ -322,7 +330,7 @@ class AssetDB {
 class AIProvider {
     /**
      * @param {object} opts
-     * @param {'openai'|'azure'} opts.mode
+     * @param {'openai'|'azure'|'pollinations'} opts.mode
      * @param {string}           [opts.apiKey]           - for openai mode
      * @param {string}           [opts.model]            - for openai mode
      * @param {string}           [opts.azureEndpoint]    - for azure mode
@@ -343,8 +351,19 @@ class AIProvider {
     }
 
     async generateImage(prompt, size = '1024x1024') {
+        if (this.mode === 'pollinations') return this._pollinationsGenerate(prompt, size);
         if (this.mode === 'azure') return this._azureGenerate(prompt, size);
         return this._openaiGenerate(prompt, size);
+    }
+
+    /* ── Pollinations.ai (free, no key) ── */
+    async _pollinationsGenerate(prompt, size) {
+        const [w, h] = size.split('x').map(Number);
+        const seed = Math.floor(Math.random() * 1000000);
+        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true`;
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`Pollinations error ${resp.status}: ${resp.statusText}`);
+        return await resp.blob();
     }
 
     /* ── OpenAI direct ── */
@@ -429,6 +448,7 @@ class AssetGenerator {
         this._emit({ message: 'Generating background scene...' });
         const isDalle = this.ai.mode === 'openai' && this.ai.model.startsWith('dall-e');
         const bgSize = isDalle ? '1792x1024' : '1024x1024';
+        const npcSize = '1024x1024';
         const bgBlob = await this.ai.generateImage(this._bgPrompt(config.theme), bgSize);
         if (this.cancelled) return;
         await this.db.save('background', bgBlob);
@@ -957,12 +977,13 @@ class Game {
         };
 
         // ── Auth-tab switching ──
-        let authMode = 'azure';
+        let authMode = 'free';
         document.querySelectorAll('.auth-tab').forEach(tab => {
             tab.onclick = () => {
                 authMode = tab.dataset.auth;
                 document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
+                document.getElementById('auth-free').classList.toggle('active', authMode === 'free');
                 document.getElementById('auth-azure').classList.toggle('active', authMode === 'azure');
                 document.getElementById('auth-apikey').classList.toggle('active', authMode === 'apikey');
             };
@@ -1032,7 +1053,9 @@ class Game {
             const theme = document.getElementById('cfg-theme').value.trim() || 'medieval village';
             let providerOpts;
 
-            if (authMode === 'azure') {
+            if (authMode === 'free') {
+                providerOpts = { mode: 'pollinations' };
+            } else if (authMode === 'azure') {
                 if (!azureAccessToken) {
                     alert('Please sign in with Azure AD first.');
                     return;
