@@ -153,6 +153,7 @@
             <!-- Auth mode tabs -->
             <div class="auth-tabs">
                 <div class="auth-tab active" data-auth="free">Free (Pollinations)</div>
+                <div class="auth-tab" data-auth="together">Together.ai</div>
                 <div class="auth-tab" data-auth="azure">Azure AD</div>
                 <div class="auth-tab" data-auth="apikey">API Key</div>
             </div>
@@ -160,7 +161,24 @@
             <!-- Free (Pollinations.ai) section -->
             <div class="auth-section active" id="auth-free">
                 <div class="hint" style="margin-bottom:12px; color:#6ee7b7; font-size:13px;">
-                    &#10024; No API key needed! Uses <strong>Pollinations.ai</strong> — a free, open AI image generation service.
+                    &#10024; Uses <strong>Pollinations.ai</strong> — free, no key needed.
+                </div>
+                <div class="field">
+                    <label>CORS Proxy (optional but recommended)</label>
+                    <input type="text" id="cfg-proxy" placeholder="https://your-worker.your-subdomain.workers.dev">
+                    <div class="hint">Deploy the included worker.js to Cloudflare Workers for reliable generation</div>
+                </div>
+            </div>
+
+            <!-- Together.ai section -->
+            <div class="auth-section" id="auth-together">
+                <div class="hint" style="margin-bottom:12px; color:#93c5fd; font-size:13px;">
+                    &#128640; <strong>$5 free credit</strong> on signup at <a href="https://api.together.xyz" target="_blank" style="color:#60a5fa;">together.ai</a>. Generates ~1600 images.
+                </div>
+                <div class="field">
+                    <label>Together.ai API Key</label>
+                    <input type="password" id="cfg-together-key" placeholder="your-together-api-key">
+                    <div class="hint">Get one free at api.together.xyz</div>
                 </div>
             </div>
 
@@ -329,9 +347,10 @@ class AssetDB {
 class AIProvider {
     /**
      * @param {object} opts
-     * @param {'openai'|'azure'|'pollinations'} opts.mode
-     * @param {string}           [opts.apiKey]           - for openai mode
+     * @param {'openai'|'azure'|'pollinations'|'together'} opts.mode
+     * @param {string}           [opts.apiKey]           - for openai/together mode
      * @param {string}           [opts.model]            - for openai mode
+     * @param {string}           [opts.corsProxy]        - for pollinations mode
      * @param {string}           [opts.azureEndpoint]    - for azure mode
      * @param {string}           [opts.azureDeployment]  - for azure mode
      * @param {string}           [opts.azureApiVersion]  - for azure mode
@@ -342,6 +361,8 @@ class AIProvider {
         // OpenAI direct
         this.apiKey           = opts.apiKey;
         this.model            = opts.model || 'gpt-image-1';
+        // CORS proxy for Pollinations
+        this.corsProxy        = (opts.corsProxy || '').replace(/\/+$/, '');
         // Azure
         this.azureEndpoint    = (opts.azureEndpoint || '').replace(/\/+$/, '');
         this.azureDeployment  = opts.azureDeployment || '';
@@ -351,28 +372,80 @@ class AIProvider {
 
     async generateImage(prompt, size = '1024x1024') {
         if (this.mode === 'pollinations') return this._pollinationsGenerate(prompt, size);
-        if (this.mode === 'azure') return this._azureGenerate(prompt, size);
+        if (this.mode === 'together')     return this._togetherGenerate(prompt, size);
+        if (this.mode === 'azure')        return this._azureGenerate(prompt, size);
         return this._openaiGenerate(prompt, size);
     }
 
     /* ── Pollinations.ai (free, no key) ── */
     async _pollinationsGenerate(prompt, size) {
-        // Cap at 512 to reduce server load and improve success rate
         const [w, h] = size.split('x').map(Number);
-        const pw = Math.min(w, 512);
-        const ph = Math.min(h, 512);
 
-        const maxRetries = 6;
+        // If we have a CORS proxy, use the POST API through it (more reliable)
+        if (this.corsProxy) {
+            return this._pollinationsViaProxy(prompt, w, h);
+        }
+
+        // Otherwise use direct GET (subject to rate limits)
+        return this._pollinationsDirectGet(prompt, Math.min(w, 512), Math.min(h, 512));
+    }
+
+    async _pollinationsViaProxy(prompt, w, h) {
+        const targetUrl = encodeURIComponent('https://api.pollinations.ai/v1/images/generations');
+        const proxyUrl = `${this.corsProxy}/proxy/${targetUrl}`;
+
+        const maxRetries = 4;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             if (attempt > 0) {
-                const wait = 15000 + attempt * 15000; // 30s, 45s, 60s, 75s, 90s
-                console.log(`Pollinations retry ${attempt}/${maxRetries - 1}, waiting ${wait / 1000}s...`);
+                const wait = attempt * 10000;
+                console.log(`Proxy retry ${attempt}, waiting ${wait / 1000}s...`);
                 await this._delay(wait);
             }
 
-            const seed = Math.floor(Math.random() * 1000000);
-            const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${pw}&height=${ph}&seed=${seed}&nologo=true`;
+            try {
+                const resp = await fetch(proxyUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt, model: 'flux',
+                        width: w, height: h,
+                        seed: Math.floor(Math.random() * 1000000),
+                        nologo: true, n: 1,
+                    }),
+                });
 
+                if (resp.ok) {
+                    const json = await resp.json();
+                    const item = json.data?.[0];
+                    if (item?.b64_json) return this._b64ToBlob(item.b64_json);
+                    if (item?.url) {
+                        const imgResp = await fetch(item.url);
+                        if (imgResp.ok) {
+                            const blob = await imgResp.blob();
+                            if (blob.size > 1000) return blob;
+                        }
+                    }
+                }
+                console.warn(`Proxy attempt ${attempt + 1}: ${resp.status}`);
+            } catch (err) {
+                console.warn(`Proxy attempt ${attempt + 1} error:`, err.message);
+            }
+            if (attempt >= maxRetries - 1) {
+                throw new Error('Pollinations via proxy failed. Try again later.');
+            }
+        }
+    }
+
+    async _pollinationsDirectGet(prompt, w, h) {
+        const maxRetries = 6;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            if (attempt > 0) {
+                const wait = 15000 + attempt * 15000;
+                console.log(`Pollinations retry ${attempt}/${maxRetries - 1}, waiting ${wait / 1000}s...`);
+                await this._delay(wait);
+            }
+            const seed = Math.floor(Math.random() * 1000000);
+            const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true`;
             try {
                 const resp = await fetch(url);
                 if (resp.ok) {
@@ -381,13 +454,38 @@ class AIProvider {
                 }
                 console.warn(`Pollinations attempt ${attempt + 1}: status ${resp.status}`);
             } catch (err) {
-                console.warn(`Pollinations attempt ${attempt + 1} network error:`, err.message);
+                console.warn(`Pollinations attempt ${attempt + 1} error:`, err.message);
             }
-
             if (attempt >= maxRetries - 1) {
-                throw new Error(`Pollinations unavailable after ${maxRetries} attempts. The free API may be overloaded — please wait a few minutes and try again.`);
+                throw new Error('Pollinations unavailable. The free API may be overloaded — try again in a few minutes.');
             }
         }
+    }
+
+    /* ── Together.ai ($5 free credit) ── */
+    async _togetherGenerate(prompt, size) {
+        const resp = await fetch('https://api.together.xyz/v1/images/generations', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${this.apiKey}`,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: 'black-forest-labs/FLUX.1-schnell-Free',
+                prompt, n: 1,
+                width: 1024, height: 768,
+                response_format: 'b64_json',
+            }),
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(`Together.ai error ${resp.status}: ${err.error?.message || resp.statusText}`);
+        }
+        const json = await resp.json();
+        const item = json.data[0];
+        if (item.b64_json) return this._b64ToBlob(item.b64_json);
+        if (item.url) { const r = await fetch(item.url); return await r.blob(); }
+        throw new Error('No image data in Together.ai response');
     }
 
     /** Delay helper for rate-limited APIs */
@@ -998,6 +1096,7 @@ class Game {
                 document.querySelectorAll('.auth-tab').forEach(t => t.classList.remove('active'));
                 tab.classList.add('active');
                 document.getElementById('auth-free').classList.toggle('active', authMode === 'free');
+                document.getElementById('auth-together').classList.toggle('active', authMode === 'together');
                 document.getElementById('auth-azure').classList.toggle('active', authMode === 'azure');
                 document.getElementById('auth-apikey').classList.toggle('active', authMode === 'apikey');
             };
@@ -1006,6 +1105,10 @@ class Game {
         // Restore saved settings
         const savedKey = localStorage.getItem('ai_village_apikey') || '';
         document.getElementById('cfg-apikey').value = savedKey;
+        const savedProxy = localStorage.getItem('ai_village_proxy') || '';
+        document.getElementById('cfg-proxy').value = savedProxy;
+        const savedTogetherKey = localStorage.getItem('ai_village_together_key') || '';
+        document.getElementById('cfg-together-key').value = savedTogetherKey;
         const savedAzure = JSON.parse(localStorage.getItem('ai_village_azure') || '{}');
         if (savedAzure.endpoint) document.getElementById('cfg-azure-endpoint').value = savedAzure.endpoint;
         if (savedAzure.tenant)   document.getElementById('cfg-azure-tenant').value = savedAzure.tenant;
@@ -1090,7 +1193,14 @@ class Game {
             let providerOpts;
 
             if (authMode === 'free') {
-                providerOpts = { mode: 'pollinations' };
+                const proxy = document.getElementById('cfg-proxy').value.trim();
+                if (proxy) localStorage.setItem('ai_village_proxy', proxy);
+                providerOpts = { mode: 'pollinations', corsProxy: proxy || '' };
+            } else if (authMode === 'together') {
+                const key = document.getElementById('cfg-together-key').value.trim();
+                if (!key) { alert('Please enter your Together.ai API key.'); return; }
+                localStorage.setItem('ai_village_together_key', key);
+                providerOpts = { mode: 'together', apiKey: key };
             } else if (authMode === 'azure') {
                 if (!azureAccessToken) {
                     alert('Please sign in with Azure AD first.');
