@@ -661,7 +661,7 @@ class AssetGenerator {
     }
 
     _npcPrompt(desc) {
-        return `2D RPG sprite sheet, ${desc}, 3 columns 4 rows grid, row 1 front walk, row 2 right walk, row 3 left walk, row 4 back walk, pixel art, white background`;
+        return `single 2D RPG game character, ${desc}, front-facing full body, centered, clean transparent background, cartoon game art style, one character only`;
     }
 
     _emit(data) { this.onStatus(data); }
@@ -697,6 +697,29 @@ function imageToData(img) {
     const cx = c.getContext('2d');
     cx.drawImage(img, 0, 0);
     return cx.getImageData(0, 0, img.width, img.height);
+}
+
+/**
+ * Remove white/near-white background from an image, making those pixels transparent.
+ * Returns a new Image with transparency.
+ */
+function removeWhiteBackground(img, threshold = 230) {
+    const c = document.createElement('canvas');
+    c.width = img.width;
+    c.height = img.height;
+    const ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const data = ctx.getImageData(0, 0, c.width, c.height);
+    const d = data.data;
+    for (let i = 0; i < d.length; i += 4) {
+        if (d[i] > threshold && d[i + 1] > threshold && d[i + 2] > threshold) {
+            d[i + 3] = 0;
+        }
+    }
+    ctx.putImageData(data, 0, 0);
+    const newImg = new Image();
+    newImg.src = c.toDataURL();
+    return new Promise(resolve => { newImg.onload = () => resolve(newImg); });
 }
 
 /** Auto-generate a walkability mask (bottom ~55 % walkable). */
@@ -815,6 +838,63 @@ class AnimatedSprite {
             x - dw / 2, y - dh,
             dw, dh
         );
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SINGLE IMAGE SPRITE  –  for AI-generated single character images
+//  Simulates walking with a gentle bob/sway. Flips horizontally for
+//  left vs right. Uses the same play()/update()/draw() interface.
+// ═══════════════════════════════════════════════════════════════════════
+
+class SingleImageSprite {
+    constructor(image) {
+        this.image    = image;
+        this.frameW   = image.width;
+        this.frameH   = image.height;
+        this.currentName = 'idle_down';
+        this.elapsed  = 0;
+        this.bobPhase = 0;
+    }
+
+    play(name) { this.currentName = name; }
+
+    update(dt) {
+        this.elapsed += dt;
+        if (this.currentName.startsWith('walk')) {
+            this.bobPhase += dt * 10;
+        } else {
+            this.bobPhase = 0;
+        }
+    }
+
+    draw(ctx, x, y, scale) {
+        const dirName   = this.currentName.split('_')[1] || 'down';
+        const isWalking = this.currentName.startsWith('walk');
+        const flipH     = (dirName === 'left');
+
+        // Walking bob: slight vertical bounce + lean
+        const bob  = isWalking ? Math.sin(this.bobPhase) * 2 * scale : 0;
+        const lean = isWalking ? Math.sin(this.bobPhase * 0.5) * 0.03 : 0;
+
+        const dw = this.frameW * scale;
+        const dh = this.frameH * scale;
+        const dx = x - dw / 2;
+        const dy = y - dh + bob;
+
+        ctx.save();
+        if (flipH) {
+            ctx.translate(x, 0);
+            ctx.scale(-1, 1);
+            ctx.translate(-x, 0);
+        }
+        if (lean !== 0) {
+            ctx.translate(x, y);
+            ctx.rotate(lean);
+            ctx.translate(-x, -y);
+        }
+        ctx.drawImage(this.image, dx, dy, dw, dh);
+        ctx.restore();
     }
 }
 
@@ -1385,7 +1465,11 @@ class Game {
             const npcImages = [];
             for (let i = 0; i < config.npcs.length; i++) {
                 const blob = await this.db.load(`npc_${i}`);
-                if (blob) npcImages.push(await blobToImage(blob));
+                if (blob) {
+                    const raw = await blobToImage(blob);
+                    const cleaned = await removeWhiteBackground(raw);
+                    npcImages.push(cleaned);
+                }
             }
 
             loadingEl.classList.remove('active');
@@ -1439,15 +1523,15 @@ class Game {
 
         this.scene = new Scene(bgImg, walkmask);
 
-        // Player sprite: use dedicated sheet or first NPC sheet
+        // Player sprite: use dedicated sheet or first NPC image
         const pImg = playerSpriteImg || npcImages[0];
         if (!pImg) { alert('No sprite images available.'); return; }
 
-        // Local spritesheets (680×844) need explicit frame dimensions
-        const isLocal = (pImg.width === 680 && pImg.height === 844);
-        const playerSprite = isLocal
+        // Detect if it's a proper sprite sheet (legacy local files) or AI-generated single image
+        const isLegacySheet = (pImg.width === 680 && pImg.height === 844);
+        const playerSprite = isLegacySheet
             ? new AnimatedSprite(pImg, 3, 4, 136, 211)
-            : new AnimatedSprite(pImg);
+            : (playerSpriteImg ? new AnimatedSprite(pImg) : new SingleImageSprite(pImg));
 
         this.player = new Player(playerSprite, this.scene);
         this.player.x = bgImg.width * 0.5;
@@ -1457,7 +1541,7 @@ class Game {
         this.npcs = npcImages.map((img, i) => {
             const sp = (img.width === 680 && img.height === 844)
                 ? new AnimatedSprite(img, 3, 4, 136, 211)
-                : new AnimatedSprite(img);
+                : new SingleImageSprite(img);
             return new NPC(sp, this.scene, config.npcs[i] || `NPC ${i + 1}`);
         });
 
