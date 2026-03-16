@@ -358,30 +358,62 @@ class AIProvider {
     /* ── Pollinations.ai (free, no key) ── */
     async _pollinationsGenerate(prompt, size) {
         const [w, h] = size.split('x').map(Number);
+        // Use smaller sizes to reduce load on the free API
+        const pw = Math.min(w, 768);
+        const ph = Math.min(h, 768);
 
         const maxRetries = 6;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             if (attempt > 0) {
-                const wait = (attempt + 1) * 5000;
+                const wait = 10000 + attempt * 10000; // 20s, 30s, 40s, 50s, 60s
                 console.log(`Pollinations retry ${attempt}/${maxRetries - 1}, waiting ${wait / 1000}s...`);
                 await this._delay(wait);
             }
 
-            // New seed each attempt to avoid cached errors
-            const seed = Math.floor(Math.random() * 1000000);
-            const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true&model=flux`;
-
             try {
-                const resp = await fetch(url);
+                // Use the OpenAI-compatible POST API (more reliable than URL-based)
+                const resp = await fetch('https://api.pollinations.ai/v1/images/generations', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        prompt,
+                        model: 'flux',
+                        width: pw,
+                        height: ph,
+                        seed: Math.floor(Math.random() * 1000000),
+                        nologo: true,
+                        n: 1,
+                    }),
+                });
+
                 if (resp.ok) {
-                    const blob = await resp.blob();
-                    if (blob.size > 1000) return blob; // valid image
+                    const json = await resp.json();
+                    const item = json.data?.[0];
+                    if (item?.b64_json) return this._b64ToBlob(item.b64_json);
+                    if (item?.url) {
+                        // Fetch the image from the returned URL
+                        const imgResp = await fetch(item.url);
+                        if (imgResp.ok) {
+                            const blob = await imgResp.blob();
+                            if (blob.size > 1000) return blob;
+                        }
+                    }
                 }
-                console.warn(`Pollinations attempt ${attempt + 1}: ${resp.status} ${resp.statusText}`);
-                if (attempt >= maxRetries - 1) throw new Error(`Pollinations error ${resp.status} after ${maxRetries} attempts`);
+
+                // Fallback: try the simple URL-based API
+                const seed = Math.floor(Math.random() * 1000000);
+                const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${pw}&height=${ph}&seed=${seed}&nologo=true`;
+                const fallback = await fetch(url);
+                if (fallback.ok) {
+                    const blob = await fallback.blob();
+                    if (blob.size > 1000) return blob;
+                }
+
+                console.warn(`Pollinations attempt ${attempt + 1} failed`);
+                if (attempt >= maxRetries - 1) throw new Error(`Pollinations unavailable after ${maxRetries} attempts. The free API may be overloaded — try again later.`);
             } catch (err) {
-                if (err.message.includes('Pollinations error') || attempt >= maxRetries - 1) throw err;
-                console.warn(`Pollinations attempt ${attempt + 1} network error:`, err.message);
+                if (err.message.includes('Pollinations unavailable') || attempt >= maxRetries - 1) throw err;
+                console.warn(`Pollinations attempt ${attempt + 1} error:`, err.message);
             }
         }
     }
