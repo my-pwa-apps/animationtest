@@ -362,17 +362,21 @@ class AIProvider {
         const seed = Math.floor(Math.random() * 1000000);
         const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true`;
 
-        // Retry with exponential backoff for rate limits
+        // Retry with exponential backoff for rate limits and server errors
         const maxRetries = 5;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
-            const resp = await fetch(url);
-            if (resp.ok) return await resp.blob();
-            if (resp.status === 429 && attempt < maxRetries - 1) {
-                const wait = (attempt + 1) * 5000; // 5s, 10s, 15s, 20s
-                await new Promise(r => setTimeout(r, wait));
-                continue;
+            if (attempt > 0) {
+                const wait = attempt * 8000; // 8s, 16s, 24s, 32s
+                await this._delay(wait);
             }
-            throw new Error(`Pollinations error ${resp.status}: ${resp.statusText}`);
+            try {
+                const resp = await fetch(url);
+                if (resp.ok) return await resp.blob();
+                if ((resp.status === 429 || resp.status >= 500) && attempt < maxRetries - 1) continue;
+                throw new Error(`Pollinations error ${resp.status}: ${resp.statusText}`);
+            } catch (err) {
+                if (attempt >= maxRetries - 1) throw err;
+            }
         }
     }
 
@@ -489,25 +493,11 @@ class AssetGenerator {
     }
 
     _bgPrompt(theme) {
-        return (
-            `A beautiful 2D game background scene depicting: ${theme}. ` +
-            `Three-quarter top-down perspective with warm lighting. Rich painted style. ` +
-            `The bottom half is clear open ground (paths, grass, cobblestones) where characters can walk. ` +
-            `The upper portion has buildings, trees, or scenic elements. ` +
-            `No people, no characters, no text, no UI. Detailed vibrant game art.`
-        );
+        return `2D game background, ${theme}, top-down view, warm lighting, painted style, open ground below for walking, buildings and trees above, no people, no text`;
     }
 
     _npcPrompt(desc) {
-        return (
-            `A 2D RPG character sprite sheet for: ${desc}. ` +
-            `The image is divided into a precise grid of 3 columns and 4 rows (12 cells). ` +
-            `Row 1 (top): character facing the viewer (front view), 3 walking cycle frames left to right. ` +
-            `Row 2: character facing right, 3 walking frames. ` +
-            `Row 3: character facing left, 3 walking frames. ` +
-            `Row 4 (bottom): character facing away (back view), 3 walking frames. ` +
-            `Same character in every cell, consistent proportions. ` +
-            `Clean solid white background. Pixel-art game style, full body visible.`
+        return `2D RPG sprite sheet, ${desc}, 3 columns 4 rows grid, row 1 front walk, row 2 right walk, row 3 left walk, row 4 back walk, pixel art, white background`;
         );
     }
 
