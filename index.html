@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Village Adventure</title>
-    <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.js" async></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1021,6 +1021,12 @@ class Game {
             }
 
             try {
+                if (typeof msal === 'undefined') {
+                    statusEl.className = 'err';
+                    statusEl.textContent = 'MSAL library not loaded. Try refreshing the page.';
+                    statusEl.style.display = 'block';
+                    return;
+                }
                 msalInstance = new msal.PublicClientApplication({
                     auth: {
                         clientId: clientId,
@@ -1055,6 +1061,8 @@ class Game {
 
         // ── Generate & Start ──
         document.getElementById('btn-generate').onclick = async () => {
+            console.log('Generate clicked, authMode:', authMode);
+            try {
             const theme = document.getElementById('cfg-theme').value.trim() || 'medieval village';
             let providerOpts;
 
@@ -1096,6 +1104,7 @@ class Game {
             const config = { theme, npcs: npcs.filter(n => n.trim()), providerOpts };
             overlay.classList.add('hidden');
             await this._generateAndStart(providerOpts, config);
+            } catch (e) { console.error('Generate handler error:', e); alert('Error: ' + e.message); }
         };
 
         // ── Resume cached ──
