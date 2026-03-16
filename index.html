@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Village Adventure</title>
-    <script src="https://cdn.jsdelivr.net/npm/@azure/msal-browser@2.39.0/lib/msal-browser.js" async></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1021,11 +1020,25 @@ class Game {
             }
 
             try {
+                // Dynamically load MSAL if not yet loaded
                 if (typeof msal === 'undefined') {
-                    statusEl.className = 'err';
-                    statusEl.textContent = 'MSAL library not loaded. Try refreshing the page.';
+                    statusEl.textContent = 'Loading authentication library...';
+                    statusEl.className = '';
                     statusEl.style.display = 'block';
-                    return;
+                    await new Promise((resolve, reject) => {
+                        const s = document.createElement('script');
+                        s.src = 'https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js';
+                        s.onload = resolve;
+                        s.onerror = () => {
+                            // Try fallback CDN
+                            const s2 = document.createElement('script');
+                            s2.src = 'https://unpkg.com/@azure/msal-browser@2.38.3/lib/msal-browser.min.js';
+                            s2.onload = resolve;
+                            s2.onerror = () => reject(new Error('Could not load MSAL library from any CDN'));
+                            document.head.appendChild(s2);
+                        };
+                        document.head.appendChild(s);
+                    });
                 }
                 msalInstance = new msal.PublicClientApplication({
                     auth: {
