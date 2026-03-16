@@ -432,7 +432,9 @@ class AIProvider {
                 console.warn(`Proxy attempt ${attempt + 1} error:`, err.message);
             }
             if (attempt >= maxRetries - 1) {
-                throw new Error('Pollinations via proxy failed. Try again later.');
+                // Proxy POST failed — fall back to direct GET via <img> tag
+                console.log('Proxy failed, falling back to direct image load...');
+                return this._pollinationsDirectGet(prompt, Math.min(w, 512), Math.min(h, 512));
             }
         }
     }
@@ -448,12 +450,10 @@ class AIProvider {
             const seed = Math.floor(Math.random() * 1000000);
             const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true`;
             try {
-                const resp = await fetch(url);
-                if (resp.ok) {
-                    const blob = await resp.blob();
-                    if (blob.size > 1000) return blob;
-                }
-                console.warn(`Pollinations attempt ${attempt + 1}: status ${resp.status}`);
+                // Use <img> tag to load — bypasses CORS and fetch restrictions
+                const blob = await this._loadImageAsBlob(url);
+                if (blob && blob.size > 1000) return blob;
+                console.warn(`Pollinations attempt ${attempt + 1}: image too small or failed`);
             } catch (err) {
                 console.warn(`Pollinations attempt ${attempt + 1} error:`, err.message);
             }
@@ -461,6 +461,25 @@ class AIProvider {
                 throw new Error('Pollinations unavailable. The free API may be overloaded — try again in a few minutes.');
             }
         }
+    }
+
+    /** Load image URL via <img> tag (bypasses CORS), return as Blob */
+    _loadImageAsBlob(url) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = 'anonymous';
+            img.onload = () => {
+                const c = document.createElement('canvas');
+                c.width = img.naturalWidth;
+                c.height = img.naturalHeight;
+                c.getContext('2d').drawImage(img, 0, 0);
+                c.toBlob(blob => resolve(blob), 'image/png');
+            };
+            img.onerror = () => reject(new Error('Image load failed'));
+            // Timeout after 60 seconds
+            setTimeout(() => reject(new Error('Image load timed out')), 60000);
+            img.src = url;
+        });
     }
 
     /* ── Together.ai ($5 free credit) ── */
