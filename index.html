@@ -358,23 +358,30 @@ class AIProvider {
     /* ── Pollinations.ai (free, no key) ── */
     async _pollinationsGenerate(prompt, size) {
         const [w, h] = size.split('x').map(Number);
-        const seed = Math.floor(Math.random() * 1000000);
-        const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true`;
 
-        // Retry with exponential backoff for rate limits and server errors
-        const maxRetries = 5;
+        const maxRetries = 6;
         for (let attempt = 0; attempt < maxRetries; attempt++) {
             if (attempt > 0) {
-                const wait = attempt * 8000; // 8s, 16s, 24s, 32s
+                const wait = (attempt + 1) * 5000;
+                console.log(`Pollinations retry ${attempt}/${maxRetries - 1}, waiting ${wait / 1000}s...`);
                 await this._delay(wait);
             }
+
+            // New seed each attempt to avoid cached errors
+            const seed = Math.floor(Math.random() * 1000000);
+            const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true&model=flux`;
+
             try {
                 const resp = await fetch(url);
-                if (resp.ok) return await resp.blob();
-                if ((resp.status === 429 || resp.status >= 500) && attempt < maxRetries - 1) continue;
-                throw new Error(`Pollinations error ${resp.status}: ${resp.statusText}`);
+                if (resp.ok) {
+                    const blob = await resp.blob();
+                    if (blob.size > 1000) return blob; // valid image
+                }
+                console.warn(`Pollinations attempt ${attempt + 1}: ${resp.status} ${resp.statusText}`);
+                if (attempt >= maxRetries - 1) throw new Error(`Pollinations error ${resp.status} after ${maxRetries} attempts`);
             } catch (err) {
-                if (attempt >= maxRetries - 1) throw err;
+                if (err.message.includes('Pollinations error') || attempt >= maxRetries - 1) throw err;
+                console.warn(`Pollinations attempt ${attempt + 1} network error:`, err.message);
             }
         }
     }
@@ -1170,9 +1177,20 @@ class Game {
             loadingEl.classList.remove('active');
             await this._startFromCache();
         } catch (err) {
-            errorEl.textContent = err.message;
+            errorEl.textContent = err.message + ' — The free API may be overloaded. Try again in a minute.';
             statusEl.textContent = 'Generation failed';
             console.error(err);
+            // Show a retry button
+            const retryBtn = document.createElement('button');
+            retryBtn.className = 'btn btn-primary';
+            retryBtn.style.width = 'auto';
+            retryBtn.style.marginTop = '12px';
+            retryBtn.textContent = '\u{1F504} Retry';
+            retryBtn.onclick = () => {
+                retryBtn.remove();
+                this._generateAndStart(providerOpts, config);
+            };
+            errorEl.after(retryBtn);
         }
     }
 
