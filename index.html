@@ -361,10 +361,23 @@ class AIProvider {
         const [w, h] = size.split('x').map(Number);
         const seed = Math.floor(Math.random() * 1000000);
         const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=${w}&height=${h}&seed=${seed}&nologo=true`;
-        const resp = await fetch(url);
-        if (!resp.ok) throw new Error(`Pollinations error ${resp.status}: ${resp.statusText}`);
-        return await resp.blob();
+
+        // Retry with exponential backoff for rate limits
+        const maxRetries = 5;
+        for (let attempt = 0; attempt < maxRetries; attempt++) {
+            const resp = await fetch(url);
+            if (resp.ok) return await resp.blob();
+            if (resp.status === 429 && attempt < maxRetries - 1) {
+                const wait = (attempt + 1) * 5000; // 5s, 10s, 15s, 20s
+                await new Promise(r => setTimeout(r, wait));
+                continue;
+            }
+            throw new Error(`Pollinations error ${resp.status}: ${resp.statusText}`);
+        }
     }
+
+    /** Delay helper for rate-limited APIs */
+    _delay(ms) { return new Promise(r => setTimeout(r, ms)); }
 
     /* ── OpenAI direct ── */
     async _openaiGenerate(prompt, size) {
@@ -445,7 +458,7 @@ class AssetGenerator {
         const tick = () => { done++; this._emit({ progress: done / total }); };
 
         // 1 ── Background
-        this._emit({ message: 'Generating background scene...' });
+        this._emit({ message: 'Generating background scene... (this may take a moment)' });
         const isDalle = this.ai.mode === 'openai' && this.ai.model.startsWith('dall-e');
         const bgSize = isDalle ? '1792x1024' : '1024x1024';
         const npcSize = '1024x1024';
@@ -454,9 +467,11 @@ class AssetGenerator {
         await this.db.save('background', bgBlob);
         tick();
 
-        // 2 ── NPC sprite sheets
+        // 2 ── NPC sprite sheets (with delay between requests to avoid rate limits)
         for (let i = 0; i < config.npcs.length; i++) {
             if (this.cancelled) return;
+            // Delay between requests for rate-limited APIs
+            if (this.ai.mode === 'pollinations') await this.ai._delay(3000);
             this._emit({
                 message: `Generating NPC ${i + 1}/${config.npcs.length}: ${config.npcs[i]}...`
             });
