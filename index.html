@@ -899,7 +899,7 @@ class SingleImageSprite {
         this.frameH   = image.height;
         this.currentName = 'idle_down';
         this.elapsed  = 0;
-        this.bobPhase = 0;
+        this.walkPhase = 0;
     }
 
     play(name) { this.currentName = name; }
@@ -907,9 +907,7 @@ class SingleImageSprite {
     update(dt) {
         this.elapsed += dt;
         if (this.currentName.startsWith('walk')) {
-            this.bobPhase += dt * 10;
-        } else {
-            this.bobPhase = 0;
+            this.walkPhase += dt * 8; // walk cycle speed
         }
     }
 
@@ -918,27 +916,52 @@ class SingleImageSprite {
         const isWalking = this.currentName.startsWith('walk');
         const flipH     = (dirName === 'left');
 
-        // Walking bob: slight vertical bounce + lean
-        const bob  = isWalking ? Math.sin(this.bobPhase) * 2 * scale : 0;
-        const lean = isWalking ? Math.sin(this.bobPhase * 0.5) * 0.03 : 0;
-
         const dw = this.frameW * scale;
         const dh = this.frameH * scale;
-        const dx = x - dw / 2;
-        const dy = y - dh + bob;
+        const halfH = dh / 2;
 
         ctx.save();
+
+        // Flip for left-facing
         if (flipH) {
             ctx.translate(x, 0);
             ctx.scale(-1, 1);
             ctx.translate(-x, 0);
         }
-        if (lean !== 0) {
+
+        if (isWalking) {
+            const phase = this.walkPhase;
+            const bounce = Math.abs(Math.sin(phase)) * 3 * scale;
+            const tilt = Math.sin(phase) * 0.06;
+
+            // Draw upper body (top half) — tilts side to side
+            ctx.save();
+            ctx.translate(x, y - halfH);
+            ctx.rotate(tilt);
+            ctx.drawImage(
+                this.image,
+                0, 0, this.frameW, Math.floor(this.frameH / 2),
+                -dw / 2, -halfH + bounce, dw, halfH
+            );
+            ctx.restore();
+
+            // Draw lower body (bottom half) — legs with alternating skew
+            const legSwing = Math.sin(phase) * 0.12;
+            ctx.save();
             ctx.translate(x, y);
-            ctx.rotate(lean);
-            ctx.translate(-x, -y);
+            ctx.transform(1, 0, legSwing, 1, 0, 0); // skew for leg swing
+            ctx.drawImage(
+                this.image,
+                0, Math.floor(this.frameH / 2), this.frameW, Math.ceil(this.frameH / 2),
+                -dw / 2, -halfH + bounce, dw, halfH
+            );
+            ctx.restore();
+        } else {
+            // Idle: gentle breathing
+            const breathe = Math.sin(this.elapsed * 2) * scale * 0.5;
+            ctx.drawImage(this.image, x - dw / 2, y - dh + breathe, dw, dh);
         }
-        ctx.drawImage(this.image, dx, dy, dw, dh);
+
         ctx.restore();
     }
 }
